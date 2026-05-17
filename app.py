@@ -1,0 +1,2226 @@
+import os
+import io
+import base64
+import re
+import json
+import hashlib
+import unicodedata
+from datetime import datetime
+
+import anthropic
+import requests
+import streamlit as st
+import pandas as pd
+import gspread
+
+from PIL import Image
+from urllib.parse import urlencode
+
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials as UserCredentials
+
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+
+st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
+
+
+# =========================================
+# HELPERS DE SECRETS
+# =========================================
+def obter_secret_obrigatorio(chave):
+    try:
+        valor = st.secrets[chave]
+        if isinstance(valor, str) and not valor.strip():
+            raise KeyError
+        return valor
+    except Exception:
+        st.error(f"Secret obrigatório ausente ou vazio: {chave}")
+        st.stop()
+
+
+ANTHROPIC_API_KEY = obter_secret_obrigatorio("ANTHROPIC_API_KEY")
+GOOGLE_SHEET_ID_SUL = obter_secret_obrigatorio("GOOGLE_SHEET_ID_SUL")
+GOOGLE_SHEET_ID_NORTE = obter_secret_obrigatorio("GOOGLE_SHEET_ID_NORTE")
+GOOGLE_SHEET_ID_LOG = obter_secret_obrigatorio("GOOGLE_SHEET_ID_LOG")
+
+FLYERS_JANEIRO_FAZER = st.secrets.get("FLYERS_JANEIRO_FAZER", "")
+FLYERS_FEVEREIRO_FAZER = st.secrets.get("FLYERS_FEVEREIRO_FAZER", "")
+FLYERS_MARCO_FAZER = st.secrets.get("FLYERS_MARCO_FAZER", "")
+FLYERS_ABRIL_FAZER = st.secrets.get("FLYERS_ABRIL_FAZER", "")
+FLYERS_MAIO_FAZER = st.secrets.get("FLYERS_MAIO_FAZER", "")
+FLYERS_JUNHO_FAZER = st.secrets.get("FLYERS_JUNHO_FAZER", "")
+FLYERS_JULHO_FAZER = st.secrets.get("FLYERS_JULHO_FAZER", "")
+FLYERS_AGOSTO_FAZER = st.secrets.get("FLYERS_AGOSTO_FAZER", "")
+FLYERS_SETEMBRO_FAZER = st.secrets.get("FLYERS_SETEMBRO_FAZER", "")
+FLYERS_OUTUBRO_FAZER = st.secrets.get("FLYERS_OUTUBRO_FAZER", "")
+FLYERS_NOVEMBRO_FAZER = st.secrets.get("FLYERS_NOVEMBRO_FAZER", "")
+FLYERS_DEZEMBRO_FAZER = st.secrets.get("FLYERS_DEZEMBRO_FAZER", "")
+
+TORNEIOS_JANEIRO_SUL = st.secrets.get("TORNEIOS_JANEIRO_SUL", "")
+TORNEIOS_FEVEREIRO_SUL = st.secrets.get("TORNEIOS_FEVEREIRO_SUL", "")
+TORNEIOS_MARCO_SUL = st.secrets.get("TORNEIOS_MARCO_SUL", "")
+TORNEIOS_ABRIL_SUL = st.secrets.get("TORNEIOS_ABRIL_SUL", "")
+TORNEIOS_MAIO_SUL = st.secrets.get("TORNEIOS_MAIO_SUL", "")
+TORNEIOS_JUNHO_SUL = st.secrets.get("TORNEIOS_JUNHO_SUL", "")
+TORNEIOS_JULHO_SUL = st.secrets.get("TORNEIOS_JULHO_SUL", "")
+TORNEIOS_AGOSTO_SUL = st.secrets.get("TORNEIOS_AGOSTO_SUL", "")
+TORNEIOS_SETEMBRO_SUL = st.secrets.get("TORNEIOS_SETEMBRO_SUL", "")
+TORNEIOS_OUTUBRO_SUL = st.secrets.get("TORNEIOS_OUTUBRO_SUL", "")
+TORNEIOS_NOVEMBRO_SUL = st.secrets.get("TORNEIOS_NOVEMBRO_SUL", "")
+TORNEIOS_DEZEMBRO_SUL = st.secrets.get("TORNEIOS_DEZEMBRO_SUL", "")
+
+TORNEIOS_JANEIRO_NORTE = st.secrets.get("TORNEIOS_JANEIRO_NORTE", "")
+TORNEIOS_FEVEREIRO_NORTE = st.secrets.get("TORNEIOS_FEVEREIRO_NORTE", "")
+TORNEIOS_MARCO_NORTE = st.secrets.get("TORNEIOS_MARCO_NORTE", "")
+TORNEIOS_ABRIL_NORTE = st.secrets.get("TORNEIOS_ABRIL_NORTE", "")
+TORNEIOS_MAIO_NORTE = st.secrets.get("TORNEIOS_MAIO_NORTE", "")
+TORNEIOS_JUNHO_NORTE = st.secrets.get("TORNEIOS_JUNHO_NORTE", "")
+TORNEIOS_JULHO_NORTE = st.secrets.get("TORNEIOS_JULHO_NORTE", "")
+TORNEIOS_AGOSTO_NORTE = st.secrets.get("TORNEIOS_AGOSTO_NORTE", "")
+TORNEIOS_SETEMBRO_NORTE = st.secrets.get("TORNEIOS_SETEMBRO_NORTE", "")
+TORNEIOS_OUTUBRO_NORTE = st.secrets.get("TORNEIOS_OUTUBRO_NORTE", "")
+TORNEIOS_NOVEMBRO_NORTE = st.secrets.get("TORNEIOS_NOVEMBRO_NORTE", "")
+TORNEIOS_DEZEMBRO_NORTE = st.secrets.get("TORNEIOS_DEZEMBRO_NORTE", "")
+
+GOOGLE_CLIENT_ID = obter_secret_obrigatorio("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = obter_secret_obrigatorio("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = obter_secret_obrigatorio("GOOGLE_REDIRECT_URI")
+APP_SECRET_KEY = obter_secret_obrigatorio("APP_SECRET_KEY")
+
+# Cliente Anthropic (substitui OpenAI)
+claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+if "ultimo_salvamento_fingerprint" not in st.session_state:
+    st.session_state["ultimo_salvamento_fingerprint"] = None
+
+if "drive_token_info" not in st.session_state:
+    st.session_state["drive_token_info"] = None
+
+if "drive_oauth_state" not in st.session_state:
+    st.session_state["drive_oauth_state"] = None
+
+if "drive_token_carregado_persistencia" not in st.session_state:
+    st.session_state["drive_token_carregado_persistencia"] = False
+
+
+# =========================================
+# CONFIG GOOGLE
+# =========================================
+SERVICE_ACCOUNT_FILE = "credentials/google_service_account.json"
+
+SCOPES_SHEETS = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+SCOPES_DRIVE_OAUTH = [
+    "https://www.googleapis.com/auth/drive",
+]
+
+GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
+
+NOME_ABA_CONFIG = "CONFIG_APP"
+CHAVE_TOKEN_DRIVE = "DRIVE_TOKEN_INFO"
+
+
+# =========================================
+# QUERY PARAMS
+# =========================================
+def obter_query_param(nome):
+    try:
+        valor = st.query_params.get(nome)
+        if isinstance(valor, list):
+            return valor[0] if valor else None
+        return valor
+    except Exception:
+        params = st.experimental_get_query_params()
+        valores = params.get(nome, [])
+        return valores[0] if valores else None
+
+
+def limpar_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        st.experimental_set_query_params()
+
+
+# =========================================
+# GOOGLE SHEETS / SERVICE ACCOUNT
+# =========================================
+def obter_credenciais_service_account():
+    try:
+        info = dict(st.secrets["gcp_service_account"])
+        return ServiceAccountCredentials.from_service_account_info(
+            info,
+            scopes=SCOPES_SHEETS
+        )
+    except Exception:
+        pass
+
+    if os.path.exists(SERVICE_ACCOUNT_FILE):
+        return ServiceAccountCredentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE,
+            scopes=SCOPES_SHEETS
+        )
+
+    raise RuntimeError(
+        "Credenciais da service account não encontradas. "
+        "No Streamlit Cloud, adicione [gcp_service_account] nos secrets. "
+        "No ambiente local, mantenha o arquivo credentials/google_service_account.json."
+    )
+
+
+def conectar_gsheet():
+    creds = obter_credenciais_service_account()
+    return gspread.authorize(creds)
+
+
+def obter_planilha_por_agenda(client_gs, agenda):
+    if agenda == "SUL":
+        return client_gs.open_by_key(GOOGLE_SHEET_ID_SUL)
+    if agenda == "NORTE":
+        return client_gs.open_by_key(GOOGLE_SHEET_ID_NORTE)
+    raise ValueError("Agenda inválida.")
+
+
+def obter_planilha_log(client_gs):
+    return client_gs.open_by_key(GOOGLE_SHEET_ID_LOG)
+
+
+def obter_aba_config(client_gs):
+    planilha_log = obter_planilha_log(client_gs)
+
+    try:
+        aba = planilha_log.worksheet(NOME_ABA_CONFIG)
+    except Exception:
+        aba = planilha_log.add_worksheet(title=NOME_ABA_CONFIG, rows=50, cols=2)
+        aba.update("A1:B1", [["chave", "valor"]])
+
+    valores = aba.get("A1:B2")
+    if not valores:
+        aba.update("A1:B1", [["chave", "valor"]])
+    else:
+        primeira_linha = valores[0]
+        if len(primeira_linha) < 2 or primeira_linha[0] != "chave" or primeira_linha[1] != "valor":
+            aba.update("A1:B1", [["chave", "valor"]])
+
+    return aba
+
+
+def buscar_linha_por_chave(aba, chave):
+    registros = aba.get_all_values()
+    for idx, linha in enumerate(registros[1:], start=2):
+        if linha and len(linha) >= 1 and linha[0] == chave:
+            return idx
+    return None
+
+
+def carregar_token_drive_persistido():
+    try:
+        client_gs = conectar_gsheet()
+        aba = obter_aba_config(client_gs)
+        registros = aba.get_all_values()
+
+        for linha in registros[1:]:
+            if len(linha) >= 2 and linha[0] == CHAVE_TOKEN_DRIVE and linha[1].strip():
+                return json.loads(linha[1])
+
+    except Exception:
+        return None
+
+    return None
+
+
+def salvar_token_drive_persistido(token_info):
+    client_gs = conectar_gsheet()
+    aba = obter_aba_config(client_gs)
+
+    valor_json = json.dumps(token_info, ensure_ascii=False)
+    linha_existente = buscar_linha_por_chave(aba, CHAVE_TOKEN_DRIVE)
+
+    if linha_existente:
+        aba.update(f"A{linha_existente}:B{linha_existente}", [[CHAVE_TOKEN_DRIVE, valor_json]])
+    else:
+        aba.append_row([CHAVE_TOKEN_DRIVE, valor_json], value_input_option="RAW")
+
+
+def limpar_token_drive_persistido():
+    try:
+        client_gs = conectar_gsheet()
+        aba = obter_aba_config(client_gs)
+        linha_existente = buscar_linha_por_chave(aba, CHAVE_TOKEN_DRIVE)
+
+        if linha_existente:
+            aba.update(f"A{linha_existente}:B{linha_existente}", [[CHAVE_TOKEN_DRIVE, ""]])
+    except Exception:
+        pass
+
+
+def salvar_linha_na_aba(planilha, nome_aba, linha):
+    aba = planilha.worksheet(nome_aba)
+    aba.append_row(linha, value_input_option="USER_ENTERED")
+
+
+def registrar_log(
+    client_gs,
+    torneio,
+    cidade,
+    data_evento,
+    agenda,
+    mes_1,
+    mes_2,
+    nome_flyer,
+    status,
+    erro=""
+):
+    planilha_log = obter_planilha_log(client_gs)
+    aba_log = planilha_log.worksheet("LOG")
+
+    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    linha_log = [
+        timestamp,
+        torneio,
+        cidade,
+        data_evento,
+        agenda,
+        mes_1,
+        mes_2,
+        nome_flyer,
+        status,
+        erro,
+    ]
+
+    aba_log.append_row(linha_log, value_input_option="USER_ENTERED")
+
+
+# =========================================
+# GOOGLE DRIVE (OAuth WEB MANUAL)
+# =========================================
+def gerar_state_seguro():
+    base = f"{APP_SECRET_KEY}-{datetime.now().timestamp()}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def gerar_url_autorizacao_drive():
+    state = gerar_state_seguro()
+    st.session_state["drive_oauth_state"] = state
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(SCOPES_DRIVE_OAUTH),
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+        "state": state,
+    }
+
+    return f"{GOOGLE_AUTH_URI}?{urlencode(params)}"
+
+
+def trocar_code_por_token(code):
+    payload = {
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }
+
+    response = requests.post(GOOGLE_TOKEN_URI, data=payload, timeout=30)
+    try:
+        data = response.json()
+    except Exception:
+        data = {"raw_text": response.text}
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Falha ao obter token: {data}")
+
+    return data
+
+
+def renovar_token_google(refresh_token):
+    payload = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+
+    response = requests.post(GOOGLE_TOKEN_URI, data=payload, timeout=30)
+    try:
+        data = response.json()
+    except Exception:
+        data = {"raw_text": response.text}
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Falha ao renovar token: {data}")
+
+    return data
+
+
+def processar_callback_oauth_drive():
+    code = obter_query_param("code")
+    state = obter_query_param("state")
+    error = obter_query_param("error")
+
+    if error:
+        st.error(f"Autorização do Google cancelada ou negada: {error}")
+        limpar_query_params()
+        return
+
+    if not code:
+        return
+
+    state_esperado = st.session_state.get("drive_oauth_state")
+    if state_esperado and state != state_esperado:
+        st.error("Falha de segurança no retorno do Google (state inválido).")
+        limpar_query_params()
+        return
+
+    try:
+        token_data = trocar_code_por_token(code)
+
+        token_info = {
+            "token": token_data.get("access_token"),
+            "refresh_token": token_data.get("refresh_token"),
+            "token_uri": GOOGLE_TOKEN_URI,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "scopes": SCOPES_DRIVE_OAUTH,
+        }
+
+        st.session_state["drive_token_info"] = token_info
+        salvar_token_drive_persistido(token_info)
+
+        st.session_state["drive_oauth_state"] = None
+        limpar_query_params()
+        st.success("Google Drive conectado com sucesso.")
+        st.rerun()
+
+    except Exception as e:
+        st.error("Não foi possível concluir a autenticação do Google Drive.")
+        st.code(repr(e))
+        limpar_query_params()
+
+
+def obter_credenciais_drive_usuario():
+    token_info = st.session_state.get("drive_token_info")
+    if not token_info:
+        return None
+
+    if not token_info.get("token"):
+        return None
+
+    creds = UserCredentials(
+        token=token_info.get("token"),
+        refresh_token=token_info.get("refresh_token"),
+        token_uri=token_info.get("token_uri"),
+        client_id=token_info.get("client_id"),
+        client_secret=token_info.get("client_secret"),
+        scopes=token_info.get("scopes"),
+    )
+
+    if creds.expired and creds.refresh_token:
+        try:
+            novo_token = renovar_token_google(creds.refresh_token)
+
+            token_atualizado = {
+                "token": novo_token.get("access_token"),
+                "refresh_token": token_info.get("refresh_token"),
+                "token_uri": GOOGLE_TOKEN_URI,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "scopes": SCOPES_DRIVE_OAUTH,
+            }
+
+            st.session_state["drive_token_info"] = token_atualizado
+            salvar_token_drive_persistido(token_atualizado)
+
+            creds = UserCredentials(
+                token=novo_token.get("access_token"),
+                refresh_token=token_info.get("refresh_token"),
+                token_uri=GOOGLE_TOKEN_URI,
+                client_id=GOOGLE_CLIENT_ID,
+                client_secret=GOOGLE_CLIENT_SECRET,
+                scopes=SCOPES_DRIVE_OAUTH,
+            )
+        except Exception:
+            st.session_state["drive_token_info"] = None
+            limpar_token_drive_persistido()
+            return None
+
+    if not creds.valid:
+        return None
+
+    return creds
+
+
+def carregar_token_persistido_na_sessao():
+    if st.session_state.get("drive_token_carregado_persistencia"):
+        return
+
+    st.session_state["drive_token_carregado_persistencia"] = True
+
+    if st.session_state.get("drive_token_info"):
+        return
+
+    token_info = carregar_token_drive_persistido()
+    if token_info:
+        st.session_state["drive_token_info"] = token_info
+
+
+def drive_conectado():
+    carregar_token_persistido_na_sessao()
+    creds = obter_credenciais_drive_usuario()
+    return creds is not None
+
+
+def conectar_drive_usuario():
+    carregar_token_persistido_na_sessao()
+    creds = obter_credenciais_drive_usuario()
+    if not creds:
+        raise RuntimeError(
+            "Google Drive não conectado. Clique em 'Conectar Google Drive' antes de salvar."
+        )
+
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def desconectar_drive_usuario():
+    token_info = st.session_state.get("drive_token_info")
+    access_token = token_info.get("token") if token_info else None
+
+    if access_token:
+        try:
+            requests.post(
+                GOOGLE_REVOKE_URI,
+                params={"token": access_token},
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                timeout=15
+            )
+        except Exception:
+            pass
+
+    st.session_state["drive_token_info"] = None
+    st.session_state["drive_oauth_state"] = None
+    limpar_token_drive_persistido()
+    limpar_query_params()
+
+
+def obter_id_pasta_flyers(mes):
+    mapa = {
+        "1. Janeiro": FLYERS_JANEIRO_FAZER,
+        "2. Fevereiro": FLYERS_FEVEREIRO_FAZER,
+        "3. Março": FLYERS_MARCO_FAZER,
+        "4. Abril": FLYERS_ABRIL_FAZER,
+        "5. Maio": FLYERS_MAIO_FAZER,
+        "6. Junho": FLYERS_JUNHO_FAZER,
+        "7. Julho": FLYERS_JULHO_FAZER,
+        "8. Agosto": FLYERS_AGOSTO_FAZER,
+        "9. Setembro": FLYERS_SETEMBRO_FAZER,
+        "10. Outubro": FLYERS_OUTUBRO_FAZER,
+        "11. Novembro": FLYERS_NOVEMBRO_FAZER,
+        "12. Dezembro": FLYERS_DEZEMBRO_FAZER,
+    }
+    return mapa.get(mes, "")
+
+
+def obter_id_pasta_torneios(mes, agenda):
+    agenda = (agenda or "").upper().strip()
+
+    mapa_sul = {
+        "1. Janeiro": TORNEIOS_JANEIRO_SUL,
+        "2. Fevereiro": TORNEIOS_FEVEREIRO_SUL,
+        "3. Março": TORNEIOS_MARCO_SUL,
+        "4. Abril": TORNEIOS_ABRIL_SUL,
+        "5. Maio": TORNEIOS_MAIO_SUL,
+        "6. Junho": TORNEIOS_JUNHO_SUL,
+        "7. Julho": TORNEIOS_JULHO_SUL,
+        "8. Agosto": TORNEIOS_AGOSTO_SUL,
+        "9. Setembro": TORNEIOS_SETEMBRO_SUL,
+        "10. Outubro": TORNEIOS_OUTUBRO_SUL,
+        "11. Novembro": TORNEIOS_NOVEMBRO_SUL,
+        "12. Dezembro": TORNEIOS_DEZEMBRO_SUL,
+    }
+
+    mapa_norte = {
+        "1. Janeiro": TORNEIOS_JANEIRO_NORTE,
+        "2. Fevereiro": TORNEIOS_FEVEREIRO_NORTE,
+        "3. Março": TORNEIOS_MARCO_NORTE,
+        "4. Abril": TORNEIOS_ABRIL_NORTE,
+        "5. Maio": TORNEIOS_MAIO_NORTE,
+        "6. Junho": TORNEIOS_JUNHO_NORTE,
+        "7. Julho": TORNEIOS_JULHO_NORTE,
+        "8. Agosto": TORNEIOS_AGOSTO_NORTE,
+        "9. Setembro": TORNEIOS_SETEMBRO_NORTE,
+        "10. Outubro": TORNEIOS_OUTUBRO_NORTE,
+        "11. Novembro": TORNEIOS_NOVEMBRO_NORTE,
+        "12. Dezembro": TORNEIOS_DEZEMBRO_NORTE,
+    }
+
+    if agenda == "SUL":
+        return mapa_sul.get(mes, "")
+    if agenda == "NORTE":
+        return mapa_norte.get(mes, "")
+    return ""
+
+
+def upload_arquivo_drive(service, uploaded_file, folder_id, nome_arquivo=None):
+    if not folder_id:
+        raise ValueError("ID da pasta não encontrado.")
+
+    file_name = nome_arquivo if nome_arquivo else uploaded_file.name
+
+    file_metadata = {
+        "name": file_name,
+        "parents": [folder_id]
+    }
+
+    file_bytes = uploaded_file.getvalue()
+    media = MediaIoBaseUpload(
+        io.BytesIO(file_bytes),
+        mimetype=uploaded_file.type,
+        resumable=False
+    )
+
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id,name,parents",
+        supportsAllDrives=True
+    ).execute()
+
+    return file
+
+
+def listar_arquivos_pasta_drive(service, folder_id):
+    if not folder_id:
+        raise ValueError("ID da pasta não encontrado.")
+
+    arquivos = []
+    page_token = None
+
+    while True:
+        resposta = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="nextPageToken, files(id, name)",
+            pageToken=page_token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+
+        arquivos.extend(resposta.get("files", []))
+        page_token = resposta.get("nextPageToken")
+
+        if not page_token:
+            break
+
+    return arquivos
+
+
+def excluir_arquivos_pasta_drive(service, folder_id):
+    arquivos = listar_arquivos_pasta_drive(service, folder_id)
+    quantidade = 0
+
+    for arquivo in arquivos:
+        service.files().delete(
+            fileId=arquivo["id"],
+            supportsAllDrives=True
+        ).execute()
+        quantidade += 1
+
+    return quantidade
+
+
+# =========================================
+# UTILITÁRIOS GERAIS
+# =========================================
+def limpar_espacos(texto):
+    return " ".join(str(texto).strip().split())
+
+
+def remover_acentos(texto):
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _capitalizar_palavra_com_apostrofo(palavra):
+    partes = palavra.split("'")
+    partes_tratadas = []
+
+    for parte in partes:
+        if not parte:
+            partes_tratadas.append(parte)
+        else:
+            parte_lower = parte.lower()
+            partes_tratadas.append(parte_lower[:1].upper() + parte_lower[1:])
+
+    return "'".join(partes_tratadas)
+
+
+def capitalizar_texto_inteligente(texto):
+    texto = limpar_espacos(texto)
+    if not texto:
+        return ""
+
+    minusculas = {
+        "de", "da", "do", "das", "dos",
+        "e", "em", "na", "no", "nas", "nos"
+    }
+
+    separadores = re.split(r"(\s+|/|-)", texto)
+    resultado = []
+    primeira_palavra_real = True
+
+    for parte in separadores:
+        if not parte:
+            resultado.append(parte)
+            continue
+
+        if re.fullmatch(r"(\s+|/|-)", parte):
+            resultado.append(parte)
+            continue
+
+        parte_limpa = parte.strip()
+        parte_lower = parte_limpa.lower()
+
+        if not primeira_palavra_real and parte_lower in minusculas:
+            resultado.append(parte_lower)
+        else:
+            if re.search(r"[A-Z]{2,}", parte):
+                resultado.append(parte)
+            else:
+                resultado.append(_capitalizar_palavra_com_apostrofo(parte))
+
+        primeira_palavra_real = False
+
+    return "".join(resultado)
+
+
+def imagem_para_base64(uploaded_file):
+    """Converte imagem para base64 puro (sem data URL prefix) — formato exigido pela API Anthropic."""
+    bytes_imagem = uploaded_file.getvalue()
+    return base64.standard_b64encode(bytes_imagem).decode("utf-8")
+
+
+def obter_media_type(uploaded_file):
+    """Retorna o media type correto aceito pela API Anthropic para imagens."""
+    mime = uploaded_file.type or ""
+    mapa = {
+        "image/jpeg": "image/jpeg",
+        "image/jpg": "image/jpeg",
+        "image/png": "image/png",
+        "image/gif": "image/gif",
+        "image/webp": "image/webp",
+    }
+    return mapa.get(mime, "image/jpeg")
+
+
+def normalizar_ano(ano_texto):
+    ano_texto = str(ano_texto).strip()
+    if not ano_texto:
+        return ""
+    if len(ano_texto) == 2:
+        return f"20{ano_texto}"
+    return ano_texto
+
+
+def ano_4_para_2(ano_texto):
+    ano_texto = normalizar_ano(ano_texto)
+    return ano_texto[-2:] if ano_texto else ""
+
+
+def gerar_nome_arquivo(uf, data_evento, cidade):
+    if not uf or not data_evento or not cidade:
+        return ""
+    dias = extrair_dias_para_nome(data_evento)
+    cidade_formatada = capitalizar_texto_inteligente(cidade)
+    return f"{uf} {dias} {cidade_formatada.strip()}"
+
+
+def gerar_nome_flyer(uploaded_file, nome_base):
+    _, extensao = os.path.splitext(uploaded_file.name)
+    extensao = extensao.lower().strip()
+
+    if not extensao:
+        mime_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+        extensao = mime_map.get(uploaded_file.type, "")
+
+    return f"{nome_base}{extensao}"
+
+
+def gerar_fingerprint_salvamento(texto_confirmado, agenda, mes_1, mes_2, flyer_final, print_post):
+    nome_flyer = flyer_final.name if flyer_final else ""
+    nome_print = print_post.name if print_post else ""
+    base = "||".join([
+        limpar_espacos(texto_confirmado),
+        agenda or "",
+        mes_1 or "",
+        mes_2 or "",
+        nome_flyer,
+        nome_print
+    ])
+    return hashlib.md5(base.encode("utf-8")).hexdigest()
+
+
+def numero_para_coluna_excel(num):
+    resultado = ""
+    while num > 0:
+        num, resto = divmod(num - 1, 26)
+        resultado = chr(65 + resto) + resultado
+    return resultado
+
+
+def limpar_aba_mantendo_cabecalho(planilha, nome_aba):
+    aba = planilha.worksheet(nome_aba)
+    valores = aba.get_all_values()
+
+    if len(valores) <= 1:
+        return 0
+
+    ultima_linha = len(valores)
+    maior_coluna = max(len(linha) for linha in valores) if valores else 1
+    ultima_coluna_letra = numero_para_coluna_excel(maior_coluna)
+
+    intervalo = f"A2:{ultima_coluna_letra}{ultima_linha}"
+    aba.batch_clear([intervalo])
+
+    return ultima_linha - 1
+
+
+def nome_mes_sem_numero(mes):
+    if ". " in mes:
+        return mes.split(". ", 1)[1]
+    return mes
+
+
+# =========================================
+# ESTADOS
+# =========================================
+def uf_para_estado(uf):
+    mapa = {
+        "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas",
+        "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal",
+        "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão",
+        "MT": "Mato Grosso", "MS": "Mato Grosso do Sul", "MG": "Minas Gerais",
+        "PA": "Pará", "PB": "Paraíba", "PR": "Paraná", "PE": "Pernambuco",
+        "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+        "RS": "Rio Grande do Sul", "RO": "Rondônia", "RR": "Roraima",
+        "SC": "Santa Catarina", "SP": "São Paulo", "SE": "Sergipe",
+        "TO": "Tocantins",
+    }
+    return mapa.get(uf.strip().upper(), "")
+
+
+def normalizar_cidade_uf(cidade_uf):
+    s = limpar_espacos(cidade_uf)
+    if not s:
+        return ""
+
+    s = s.replace(" - ", "/").replace(" – ", "/").replace("\\", "/")
+    s = s.replace(", ", "/").replace(",", "/")
+
+    if "/" not in s:
+        return capitalizar_texto_inteligente(s)
+
+    partes = s.rsplit("/", 1)
+    cidade = capitalizar_texto_inteligente(limpar_espacos(partes[0]))
+    uf = limpar_espacos(partes[1]).upper()
+
+    if len(uf) > 2:
+        mapa_reverso = {
+            remover_acentos(v).lower(): k
+            for k, v in {
+                "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas",
+                "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal",
+                "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão",
+                "MT": "Mato Grosso", "MS": "Mato Grosso do Sul", "MG": "Minas Gerais",
+                "PA": "Pará", "PB": "Paraíba", "PR": "Paraná", "PE": "Pernambuco",
+                "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+                "RS": "Rio Grande do Sul", "RO": "Rondônia", "RR": "Roraima",
+                "SC": "Santa Catarina", "SP": "São Paulo", "SE": "Sergipe",
+                "TO": "Tocantins",
+            }.items()
+        }
+        uf = mapa_reverso.get(remover_acentos(uf).lower(), uf[:2].upper())
+
+    return f"{cidade}/{uf}"
+
+
+def normalizar_cidade_uf_tela2(cidade_uf):
+    s = limpar_espacos(cidade_uf)
+    if not s:
+        return ""
+
+    s = s.replace(" - ", "/").replace(" – ", "/").replace("\\", "/")
+    s = s.replace(", ", "/").replace(",", "/")
+
+    if "/" not in s:
+        return s
+
+    partes = s.rsplit("/", 1)
+    cidade = limpar_espacos(partes[0])
+    uf = limpar_espacos(partes[1]).upper()
+
+    return f"{cidade}/{uf}"
+
+
+def separar_cidade_uf(cidade_uf):
+    if "/" not in cidade_uf:
+        return cidade_uf.strip(), "", ""
+
+    partes = cidade_uf.rsplit("/", 1)
+    cidade = partes[0].strip()
+    uf = partes[1].strip().upper()
+    estado = uf_para_estado(uf)
+    return cidade, uf, estado
+
+
+# =========================================
+# DATAS
+# =========================================
+def extrair_partes_data(data_texto):
+    s = limpar_espacos(str(data_texto).replace("'", ""))
+    padrao = r"(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{2,4}))?"
+    return re.findall(padrao, s)
+
+
+def reconstruir_datas_completas(data_texto):
+    partes = extrair_partes_data(data_texto)
+    if not partes:
+        return []
+
+    ano_atual = str(datetime.now().year)
+
+    registros = []
+    for dia, mes, ano in partes:
+        registros.append({
+            "dia": dia.zfill(2),
+            "mes": mes.zfill(2) if mes else None,
+            "ano": normalizar_ano(ano) if ano else None
+        })
+
+    ano_corrente = None
+    for i in range(len(registros) - 1, -1, -1):
+        if registros[i]["ano"]:
+            ano_corrente = registros[i]["ano"]
+        else:
+            registros[i]["ano"] = ano_corrente
+
+    mes_corrente = None
+    for i in range(len(registros) - 1, -1, -1):
+        if registros[i]["mes"]:
+            mes_corrente = registros[i]["mes"]
+        else:
+            registros[i]["mes"] = mes_corrente
+
+    for r in registros:
+        if not r["ano"]:
+            r["ano"] = ano_atual
+
+    datas = []
+    for r in registros:
+        if r["dia"] and r["mes"] and r["ano"]:
+            datas.append(f'{r["dia"]}/{r["mes"]}/{r["ano"]}')
+
+    return datas
+
+
+def extrair_data_inicial_final(data_texto):
+    datas = reconstruir_datas_completas(data_texto)
+    if not datas:
+        return "", ""
+    return datas[0], datas[-1]
+
+
+def normalizar_data_visual_ant(data_texto):
+    s = limpar_espacos(str(data_texto))
+    if not s:
+        return ""
+
+    datas = reconstruir_datas_completas(s)
+    if not datas:
+        return f"'{s}"
+
+    if len(datas) == 1:
+        d, m, a = datas[0].split("/")
+        return f"'{d}/{m}/{a[-2:]}"
+
+    meses = [d.split("/")[1] for d in datas]
+    anos = [d.split("/")[2][-2:] for d in datas]
+
+    if len(set(meses)) == 1 and len(set(anos)) == 1:
+        mes = meses[0]
+        ano2 = anos[0]
+        dias = [d.split("/")[0] for d in datas]
+
+        if len(dias) == 2:
+            return f"'{dias[0]} e {dias[1]}/{mes}/{ano2}"
+
+        return f"'{', '.join(dias[:-1])} e {dias[-1]}/{mes}/{ano2}"
+
+    blocos = []
+    grupos = []
+    grupo_atual = {"mes": None, "ano2": None, "dias": []}
+
+    for data in datas:
+        dia, mes, ano = data.split("/")
+        ano2 = ano[-2:]
+
+        if grupo_atual["mes"] == mes and grupo_atual["ano2"] == ano2:
+            grupo_atual["dias"].append(dia)
+        else:
+            if grupo_atual["dias"]:
+                grupos.append(grupo_atual)
+            grupo_atual = {"mes": mes, "ano2": ano2, "dias": [dia]}
+
+    if grupo_atual["dias"]:
+        grupos.append(grupo_atual)
+
+    for i, g in enumerate(grupos):
+        dias_txt = ", ".join(g["dias"])
+        if i == len(grupos) - 1:
+            blocos.append(f"{dias_txt}/{g['mes']}/{g['ano2']}")
+        else:
+            blocos.append(f"{dias_txt}/{g['mes']}")
+
+    if len(blocos) == 2:
+        return f"'{blocos[0]} e {blocos[1]}"
+
+    return f"'{', '.join(blocos[:-1])} e {blocos[-1]}"
+
+
+def formatar_data_curta(data_completa):
+    if not data_completa:
+        return ""
+    m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", data_completa)
+    if not m:
+        return data_completa
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)[-2:]}"
+
+
+def extrair_dias_para_nome(data_texto):
+    datas = reconstruir_datas_completas(data_texto)
+    if not datas:
+        return ""
+    dias = [d.split("/")[0] for d in datas]
+    if len(dias) == 1:
+        return dias[0]
+    return " ".join(dias[:2])
+
+
+# =========================================
+# CATEGORIAS
+# =========================================
+def aplicar_maiusculas_niveis(texto):
+    texto = re.sub(
+        r"\b([a-z])\+([a-z])\b",
+        lambda m: f"{m.group(1).upper()}+{m.group(2).upper()}",
+        texto,
+        flags=re.IGNORECASE
+    )
+
+    texto = re.sub(
+        r"\b(a|b|c|d)\b",
+        lambda m: m.group(1).upper(),
+        texto,
+        flags=re.IGNORECASE
+    )
+
+    return texto
+
+
+def normalizar_categoria_individual(cat):
+    cat = limpar_espacos(cat)
+    if not cat:
+        return ""
+    cat = aplicar_maiusculas_niveis(cat)
+    return cat
+
+
+def padronizar_categorias(texto):
+    texto = str(texto).replace("Categorias:", "").strip()
+
+    if not texto:
+        return "não encontrado"
+
+    texto = texto.replace(" + ", "+")
+    texto = re.sub(r"\s*/\s*", ", ", texto)
+    texto = re.sub(r"\s*;\s*", ", ", texto)
+    texto = re.sub(r"\s+[–-]\s+", ", ", texto)
+
+    partes = [p.strip() for p in texto.split(",") if p.strip()]
+
+    if not partes:
+        return "não encontrado"
+
+    partes = [normalizar_categoria_individual(p) for p in partes if p]
+
+    if not partes:
+        return "não encontrado"
+
+    if len(partes) == 1:
+        return partes[0]
+
+    return ", ".join(partes[:-1]) + " e " + partes[-1]
+
+
+# =========================================
+# CONTATO / INSTAGRAM
+# =========================================
+def normalizar_contato(contato):
+    contato = limpar_espacos(contato)
+    if not contato:
+        return "não encontrado"
+
+    telefone = re.search(r"\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}", contato)
+    if telefone:
+        numeros = re.sub(r"\D", "", telefone.group(0))
+        if len(numeros) == 11:
+            return f"({numeros[:2]}) {numeros[2:7]}-{numeros[7:]}"
+        if len(numeros) == 10:
+            return f"({numeros[:2]}) {numeros[2:6]}-{numeros[6:]}"
+        return telefone.group(0)
+
+    instagram = re.search(r"@\w[\w\.]*", contato)
+    if instagram:
+        return instagram.group(0)
+
+    return contato
+
+
+def extrair_instagrams_de_texto(texto):
+    encontrados = re.findall(r"@\w[\w\.]*", str(texto))
+    vistos = set()
+    resultado = []
+
+    for item in encontrados:
+        chave = item.lower()
+        if chave not in vistos:
+            vistos.add(chave)
+            resultado.append(item)
+
+    return resultado
+
+
+def formatar_instagrams_bloco(instagrams):
+    if not instagrams:
+        return "Instagram: não encontrado"
+    return "\n".join(instagrams)
+
+
+# =========================================
+# EXTRAÇÃO DE CAMPOS
+# =========================================
+def extrair_campos_confirmados(texto):
+    data = re.search(r"Data:\s*(.*)", texto, re.IGNORECASE)
+    torneio = re.search(r"Torneio:\s*(.*)", texto, re.IGNORECASE)
+    cidade = re.search(r"Cidade.*:\s*(.*)", texto, re.IGNORECASE)
+    local = re.search(r"Local:\s*(.*)", texto, re.IGNORECASE)
+    categorias = re.search(r"Categorias:\s*(.*)", texto, re.IGNORECASE)
+    contato = re.search(r"Contato:\s*(.*)", texto, re.IGNORECASE)
+
+    return {
+        "data": limpar_espacos(data.group(1)) if data else "",
+        "torneio": limpar_espacos(torneio.group(1)) if torneio else "",
+        "cidade_uf": limpar_espacos(cidade.group(1)) if cidade else "",
+        "local": limpar_espacos(local.group(1)) if local else "",
+        "categorias": limpar_espacos(categorias.group(1)) if categorias else "",
+        "contato": limpar_espacos(contato.group(1)) if contato else "",
+    }
+
+
+def extrair_campos_lote(texto):
+    instagrams = re.search(r"Instagrams:\s*(.*)", texto, re.IGNORECASE)
+    data = re.search(r"Data:\s*(.*)", texto, re.IGNORECASE)
+    torneio = re.search(r"Torneio:\s*(.*)", texto, re.IGNORECASE)
+    cidade = re.search(r"Cidade.*:\s*(.*)", texto, re.IGNORECASE)
+    local = re.search(r"Local:\s*(.*)", texto, re.IGNORECASE)
+    categorias = re.search(r"Categorias:\s*(.*)", texto, re.IGNORECASE)
+    contato = re.search(r"Contato:\s*(.*)", texto, re.IGNORECASE)
+
+    igs = extrair_instagrams_de_texto(instagrams.group(1)) if instagrams else []
+
+    return {
+        "instagrams": igs,
+        "data": limpar_espacos(data.group(1)) if data else "",
+        "torneio": limpar_espacos(torneio.group(1)) if torneio else "",
+        "cidade_uf": limpar_espacos(cidade.group(1)) if cidade else "",
+        "local": limpar_espacos(local.group(1)) if local else "",
+        "categorias": limpar_espacos(categorias.group(1)) if categorias else "",
+        "contato": limpar_espacos(contato.group(1)) if contato else "",
+    }
+
+
+def montar_mensagem(texto):
+    campos = extrair_campos_confirmados(texto)
+
+    data_visual = normalizar_data_visual_ant(campos["data"])
+    cidade_uf = normalizar_cidade_uf(campos["cidade_uf"])
+    categorias = padronizar_categorias(campos["categorias"])
+    contato = normalizar_contato(campos["contato"])
+    torneio = capitalizar_texto_inteligente(campos["torneio"])
+    local = capitalizar_texto_inteligente(campos["local"])
+
+    return (
+        f"Data: {data_visual or 'não encontrado'}\n"
+        f"Torneio: {torneio or 'não encontrado'}\n"
+        f"Cidade/ES: {cidade_uf or 'não encontrado'}\n"
+        f"Local: {local or 'não encontrado'}\n"
+        f"Categorias: {categorias}\n"
+        f"Contato: {contato}"
+    )
+
+
+def montar_bloco_informacoes_lote(campos):
+    data_visual = normalizar_data_visual_ant(campos["data"])
+    cidade_uf = normalizar_cidade_uf(campos["cidade_uf"])
+    categorias = padronizar_categorias(campos["categorias"])
+    contato = normalizar_contato(campos["contato"])
+    torneio = capitalizar_texto_inteligente(campos["torneio"])
+    local = capitalizar_texto_inteligente(campos["local"])
+
+    return (
+        f"Data: {data_visual or 'não encontrado'}\n"
+        f"Torneio: {torneio or 'não encontrado'}\n"
+        f"Cidade/ES: {cidade_uf or 'não encontrado'}\n"
+        f"Local: {local or 'não encontrado'}\n"
+        f"Categorias: {categorias or 'não encontrado'}\n"
+        f"Contato: {contato or 'não encontrado'}"
+    )
+
+
+def listar_pendencias_lote(campos):
+    bloco = {
+        "Data": normalizar_data_visual_ant(campos["data"]) if campos["data"] else "não encontrado",
+        "Torneio": capitalizar_texto_inteligente(campos["torneio"]) if campos["torneio"] else "não encontrado",
+        "Cidade/ES": normalizar_cidade_uf(campos["cidade_uf"]) if campos["cidade_uf"] else "não encontrado",
+        "Local": capitalizar_texto_inteligente(campos["local"]) if campos["local"] else "não encontrado",
+        "Categorias": padronizar_categorias(campos["categorias"]) if campos["categorias"] else "não encontrado",
+        "Contato": normalizar_contato(campos["contato"]) if campos["contato"] else "não encontrado",
+    }
+
+    return [campo for campo, valor in bloco.items() if not valor or valor == "não encontrado"]
+
+
+def montar_mensagem_direct_lote(campos):
+    perfis_txt = formatar_instagrams_bloco(campos.get("instagrams", []))
+    bloco_info = montar_bloco_informacoes_lote(campos)
+    pendencias = listar_pendencias_lote(campos)
+
+    if not pendencias:
+        return (
+            f"{perfis_txt}\n\n"
+            f"Fala pessoal!\n"
+            f"Tudo bem?\n\n"
+            f"Bora divulgar o torneio de vocês na Agenda Nacional de Torneios?\n\n"
+            f"Preciso apenas que me confirme as informações do evento:\n\n"
+            f"{bloco_info}\n\n"
+            f"Se estiver tudo ok, é só me enviar o flyer do torneio que incluiremos na ANT!"
+        )
+
+    titulo_falta = "Falta apenas a informação abaixo:" if len(pendencias) == 1 else "Faltam apenas as informações abaixo:"
+    faltas_txt = "\n".join([f"- {item}:" for item in pendencias])
+
+    return (
+        f"{perfis_txt}\n\n"
+        f"{bloco_info}\n\n"
+        f"Fala pessoal!\n"
+        f"Tudo bem?\n\n"
+        f"Bora divulgar o torneio de vocês na Agenda Nacional de Torneios?\n\n"
+        f"Já peguei quase todas as informações necessárias do post de vocês.\n"
+        f"{titulo_falta}\n\n"
+        f"{faltas_txt}"
+    )
+
+
+# =========================================
+# PROMPT DE EXTRAÇÃO (MELHORADO)
+# =========================================
+PROMPT_SISTEMA_EXTRACAO = """Você é um assistente especializado em extrair informações de torneios de futevôlei a partir de prints de divulgação do Instagram.
+
+Suas respostas devem ser precisas, sem invenções, e sempre no formato exato solicitado.
+
+Regras gerais:
+- Se um campo não puder ser identificado com segurança, escreva exatamente: não encontrado
+- Nunca invente ou suponha informações ausentes
+- Nunca una dois torneios diferentes em uma mesma extração
+- Priorize sempre informações explícitas sobre inferências
+- Em caso de conflito entre fontes, o texto complementar do usuário prevalece sobre a imagem"""
+
+
+def prompt_extracao_individual(informacao_complementar: str, ano_2: str) -> str:
+    return f"""Você está operando no modo fixo: 1 print = 1 torneio.
+
+Extraia apenas UM torneio das imagens enviadas.
+
+Prioridade obrigatória das fontes:
+1. Texto complementar do usuário (prevalece sobre tudo)
+2. Imagens enviadas
+
+Extraia exatamente estes campos:
+- Data
+- Torneio
+- Cidade/ES
+- Local
+- Categorias
+- Contato
+
+Regras obrigatórias:
+- Se houver número de telefone ou WhatsApp visível, ele tem prioridade absoluta como contato.
+- Se não houver telefone, use o @perfil do Instagram do organizador como contato.
+- Se um campo não for encontrado, escreva: não encontrado
+- Não invente informações. Não una dois torneios.
+- Padronize a data no formato ANT. Exemplos:
+  10/04/{ano_2}
+  10 e 11/04/{ano_2}
+  10, 11 e 12/04/{ano_2}
+  30, 31/03 e 01/04/{ano_2}
+- Se o ano não estiver informado na imagem, assuma o ano corrente ({ano_2}).
+- Cidade/ES deve sempre estar no formato Cidade/UF (sigla do estado com 2 letras).
+- Preserve categorias compostas com +, por exemplo B+C e A+B.
+- No nome do torneio, cidade e local, use capitalização inteligente:
+  mantenha minúsculas internas em palavras como de, da, do, dos, das, e, em, na, no, nas e nos.
+
+Texto complementar do usuário:
+{informacao_complementar.strip() if informacao_complementar.strip() else "nenhum"}
+
+Responda APENAS com o bloco abaixo, sem texto antes ou depois:
+
+Data:
+Torneio:
+Cidade/ES:
+Local:
+Categorias:
+Contato:"""
+
+
+def prompt_extracao_lote(ano_2: str) -> str:
+    return f"""Você está operando no modo fixo: 1 print = 1 torneio.
+
+Extraia apenas UM torneio desta imagem.
+
+Extraia exatamente estes campos:
+- Instagrams
+- Data
+- Torneio
+- Cidade/ES
+- Local
+- Categorias
+- Contato
+
+Regras obrigatórias:
+- Em Instagrams, liste TODOS os @perfis de Instagram visíveis na postagem (colabs incluídos), separados por espaço.
+- Se não encontrar nenhum perfil, escreva: não encontrado
+- Se houver número de telefone ou WhatsApp visível, ele tem prioridade absoluta como contato.
+- Se não houver telefone, use um @perfil do Instagram como contato.
+- Se um campo não for encontrado, escreva: não encontrado
+- Não invente informações. Não una dois torneios.
+- Padronize a data no formato ANT. Exemplos:
+  10/04/{ano_2}
+  10 e 11/04/{ano_2}
+  10, 11 e 12/04/{ano_2}
+  30, 31/03 e 01/04/{ano_2}
+- Se o ano não estiver informado na imagem, assuma o ano corrente ({ano_2}).
+- Cidade/ES deve sempre estar no formato Cidade/UF (sigla do estado com 2 letras).
+- Preserve categorias compostas com +, por exemplo B+C e A+B.
+- No nome do torneio, cidade e local, use capitalização inteligente:
+  mantenha minúsculas internas em palavras como de, da, do, dos, das, e, em, na, no, nas e nos.
+
+Responda APENAS com o bloco abaixo, sem texto antes ou depois:
+
+Instagrams:
+Data:
+Torneio:
+Cidade/ES:
+Local:
+Categorias:
+Contato:"""
+
+
+# =========================================
+# CHAMADAS À API DO CLAUDE (ANTHROPIC)
+# =========================================
+def extrair_texto_1_torneio(imagens: list, informacao_complementar: str = "") -> str:
+    """Extração individual: múltiplas imagens do mesmo torneio."""
+    ano_2 = str(datetime.now().year)[-2:]
+
+    conteudo = []
+
+    # Adiciona todas as imagens
+    for img in imagens:
+        conteudo.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": obter_media_type(img),
+                "data": imagem_para_base64(img),
+            },
+        })
+
+    # Adiciona o prompt textual após as imagens
+    conteudo.append({
+        "type": "text",
+        "text": prompt_extracao_individual(informacao_complementar, ano_2),
+    })
+
+    response = claude.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=512,
+        system=PROMPT_SISTEMA_EXTRACAO,
+        messages=[{"role": "user", "content": conteudo}],
+    )
+
+    return response.content[0].text
+
+
+def extrair_texto_lote_1_torneio(imagem) -> str:
+    """Extração em lote: uma imagem por chamada."""
+    ano_2 = str(datetime.now().year)[-2:]
+
+    conteudo = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": obter_media_type(imagem),
+                "data": imagem_para_base64(imagem),
+            },
+        },
+        {
+            "type": "text",
+            "text": prompt_extracao_lote(ano_2),
+        },
+    ]
+
+    response = claude.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=512,
+        system=PROMPT_SISTEMA_EXTRACAO,
+        messages=[{"role": "user", "content": conteudo}],
+    )
+
+    return response.content[0].text
+
+
+def gerar_mensagem_organizadores_claude(
+    texto_sul: str,
+    texto_norte: str,
+    link_sul: str,
+    link_norte: str,
+    total_mes1: str,
+    total_mes2: str,
+    nome_mes1: str,
+    nome_mes2: str,
+) -> str:
+    """
+    Gera a mensagem consolidada para a lista de transmissão de organizadores.
+    Substitui o agente do ChatGPT — integrado diretamente no app.
+    """
+    prompt = f"""Você é um assistente da Agenda Nacional de Torneios (ANT) de futevôlei.
+
+Gere uma mensagem consolidada para enviar à lista de transmissão de ORGANIZADORES DE TORNEIOS, informando sobre a atualização da semana.
+
+Use EXATAMENTE o padrão abaixo como referência de formato e tom. Adapte apenas os dados variáveis.
+
+Padrão de referência:
+---
+Bom dia, organizadores de torneios!
+
+A Agenda Nacional de Torneios acaba de ser atualizada, com X novos eventos, dos estados abaixo:
+
+Regiões Sul e Sudeste
+📍SP. 9 novos torneios
+📍MG. 6 novos torneios
+📍RS. 4 novos torneios
+
+Regiões Norte, Nordeste e Centro-Oeste
+📍DF. 4 novos torneios
+📍BA. 2 novos torneios
+📍GO. 1 novo torneio
+
+Já são 189 TORNEIOS do mês de março e 69 TORNEIOS do mês de abril divulgados até o momento na ANT.
+
+Clique nos links abaixo e confira os torneios da sua região! 👇
+
+Agenda Sul e Sudeste
+[link_sul]
+
+Regiões Norte, Nordeste e Centro-Oeste
+[link_norte]
+---
+
+Dados para gerar a mensagem desta semana:
+
+TOTAIS POR ESTADO — REGIÃO SUL/SUDESTE (novos torneios esta atualização):
+{texto_sul}
+
+TOTAIS POR ESTADO — REGIÃO NORTE/NORDESTE/CENTRO-OESTE (novos torneios esta atualização):
+{texto_norte}
+
+Total acumulado: {total_mes1} torneios de {nome_mes1} e {total_mes2} torneios de {nome_mes2}.
+
+Link agenda Sul e Sudeste: {link_sul}
+Link agenda Norte/Nordeste/Centro-Oeste: {link_norte}
+
+Instruções:
+- Conte os novos torneios de cada estado a partir dos dados acima.
+- Liste apenas estados que têm torneios NOVOS nesta atualização.
+- Ordene por quantidade de novos torneios (maior para menor) dentro de cada região.
+- Use o emoji 📍 antes de cada estado.
+- Não inclua estados com zero novos torneios.
+- Mantenha o tom informal e animado do padrão.
+- Responda APENAS com a mensagem pronta, sem explicações ou comentários."""
+
+    response = claude.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return response.content[0].text
+
+
+# =========================================
+# PROCESSA CALLBACK OAUTH ANTES DA UI
+# =========================================
+processar_callback_oauth_drive()
+carregar_token_persistido_na_sessao()
+
+
+# =========================================
+# UI
+# =========================================
+st.title("🏆 APP ANT v2")
+st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
+
+aba1, aba2, aba3, aba4, aba5 = st.tabs([
+    "Extração individual",
+    "Extração em lote",
+    "Registro final do torneio",
+    "Msg. Organizadores",
+    "Limpeza pós-atualização",
+])
+
+# =========================================
+# TELA 1 — EXTRAÇÃO INDIVIDUAL
+# =========================================
+with aba1:
+    st.subheader("Tela 1 — Extração individual")
+    st.write("Modo 1 print = 1 torneio. Envie um ou mais prints do mesmo torneio.")
+
+    st.divider()
+
+    print_principal = st.file_uploader(
+        "Upload do PRINT principal",
+        type=["jpg", "jpeg", "png"],
+        key="print_principal"
+    )
+
+    prints_adicionais = st.file_uploader(
+        "Uploads adicionais do mesmo torneio (opcional)",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="prints_adicionais"
+    )
+
+    informacao_complementar = st.text_area(
+        "Texto complementar / legenda / observações (opcional)",
+        placeholder="Ex.: Local: Arena Verão | Contato: @arenaverao | Cidade: Sorocaba/SP",
+        height=120,
+        key="info_complementar"
+    )
+
+    st.divider()
+
+    if st.button("Extrair informações", key="btn_extrair"):
+        if print_principal is None:
+            st.error("Envie o print principal.")
+        else:
+            imagem = Image.open(print_principal)
+            st.image(imagem, use_container_width=True)
+
+            with st.spinner("Analisando com Claude..."):
+                imagens = [print_principal] + (prints_adicionais if prints_adicionais else [])
+                resultado = extrair_texto_1_torneio(
+                    imagens=imagens,
+                    informacao_complementar=informacao_complementar
+                )
+
+            mensagem = montar_mensagem(resultado)
+
+            st.divider()
+            st.subheader("Mensagem pronta")
+
+            st.text_area(
+                "Copie e envie ao organizador",
+                value=mensagem,
+                height=250,
+                key="mensagem_pronta"
+            )
+
+# =========================================
+# TELA 2 — EXTRAÇÃO EM LOTE
+# =========================================
+with aba2:
+    st.subheader("Tela 2 — Extração em lote")
+    st.write("Cada print será tratado como 1 torneio. O app gerará blocos prontos para envio por direct.")
+
+    st.divider()
+
+    prints_lote = st.file_uploader(
+        "Uploads dos PRINTS dos torneios",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="prints_lote"
+    )
+
+    st.divider()
+
+    if st.button("Extrair torneios em lote", key="btn_extrair_lote"):
+        if not prints_lote:
+            st.error("Envie ao menos um print.")
+        else:
+            progress = st.progress(0)
+            total = len(prints_lote)
+            blocos_lote = []
+
+            for i, img in enumerate(prints_lote, start=1):
+                try:
+                    resultado = extrair_texto_lote_1_torneio(img)
+                    campos = extrair_campos_lote(resultado)
+                    mensagem_direct = montar_mensagem_direct_lote(campos)
+                except Exception as e:
+                    mensagem_direct = (
+                        "Instagram: não encontrado\n\n"
+                        "Data: não encontrado\n"
+                        "Torneio: não encontrado\n"
+                        "Cidade/ES: não encontrado\n"
+                        "Local: não encontrado\n"
+                        "Categorias: não encontrado\n"
+                        f"Contato: erro na extração ({repr(e)})"
+                    )
+
+                blocos_lote.append({
+                    "arquivo": img.name,
+                    "mensagem": mensagem_direct
+                })
+
+                progress.progress(i / total)
+
+            st.divider()
+            st.subheader("Resultados do lote")
+
+            consolidado = []
+            for idx, item in enumerate(blocos_lote, start=1):
+                with st.expander(f"Torneio {idx} — {item['arquivo']}", expanded=(idx == 1)):
+                    st.text_area(
+                        f"Bloco {idx}",
+                        value=item["mensagem"],
+                        height=340,
+                        key=f"bloco_lote_{idx}"
+                    )
+                consolidado.append(item["mensagem"])
+
+            st.divider()
+            st.subheader("Todos os blocos")
+
+            st.text_area(
+                "Copie tudo se desejar",
+                value="\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado),
+                height=600,
+                key="blocos_lote_consolidados"
+            )
+
+# =========================================
+# TELA 3 — REGISTRO FINAL DO TORNEIO
+# =========================================
+with aba3:
+    st.subheader("Tela 3 — Registro final do torneio")
+    st.write("Cole o texto confirmado pelo organizador e salve na planilha e no Drive.")
+
+    st.divider()
+
+    st.markdown("### 1. Texto confirmado")
+
+    texto_confirmado = st.text_area(
+        "Cole aqui o texto confirmado pelo organizador",
+        height=220,
+        key="texto_confirmado"
+    )
+
+    st.divider()
+
+    st.markdown("### 2. Flyer final")
+
+    flyer_final = st.file_uploader(
+        "Upload do FLYER final",
+        type=["jpg", "jpeg", "png"],
+        key="flyer_final"
+    )
+
+    st.markdown("### 2.1 Print do post")
+
+    print_post = st.file_uploader(
+        "Upload do PRINT do post",
+        type=["jpg", "jpeg", "png"],
+        key="print_post"
+    )
+
+    st.divider()
+
+    st.markdown("### 3. Organização da agenda")
+
+    agenda = st.selectbox(
+        "Agenda",
+        ["", "SUL", "NORTE"],
+        key="agenda_final"
+    )
+
+    meses = [
+        "",
+        "1. Janeiro", "2. Fevereiro", "3. Março", "4. Abril",
+        "5. Maio", "6. Junho", "7. Julho", "8. Agosto",
+        "9. Setembro", "10. Outubro", "11. Novembro", "12. Dezembro"
+    ]
+
+    meses_validos = meses[1:]
+
+    mes_1 = st.selectbox("Mês principal", meses, key="mes_1")
+
+    virada_mes = st.checkbox("Torneio em virada de mês?", key="virada_mes")
+
+    mes_2 = ""
+    if virada_mes:
+        mes_2 = st.selectbox("Segundo mês", meses, key="mes_2")
+
+    st.divider()
+
+    st.markdown("### 3.1 Conexão com Google Drive")
+
+    if drive_conectado():
+        st.success("Google Drive conectado.")
+        if st.button("Desconectar Google Drive", key="btn_desconectar_drive"):
+            desconectar_drive_usuario()
+            st.rerun()
+    else:
+        st.warning("Google Drive ainda não conectado.")
+        url_autorizacao = gerar_url_autorizacao_drive()
+        st.link_button("Conectar Google Drive", url_autorizacao)
+
+    st.divider()
+
+    st.markdown("### 4. Pré-visualização da linha da macro")
+
+    campos = extrair_campos_confirmados(texto_confirmado)
+
+    data_evento_visual = normalizar_data_visual_ant(campos["data"])
+    torneio = campos["torneio"]
+    cidade_uf = normalizar_cidade_uf_tela2(campos["cidade_uf"])
+    local_evento = campos["local"]
+    categorias = campos["categorias"]
+    contato = normalizar_contato(campos["contato"])
+
+    cidade, uf, estado_extenso = separar_cidade_uf(cidade_uf)
+    data_inicial_completa, data_final_completa = extrair_data_inicial_final(campos["data"])
+    data_inicial = formatar_data_curta(data_inicial_completa)
+    data_final = formatar_data_curta(data_final_completa)
+
+    nome_arquivo = gerar_nome_arquivo(uf, campos["data"], cidade)
+
+    linha_macro = [
+        "",
+        data_evento_visual,
+        data_inicial,
+        data_final,
+        torneio,
+        cidade_uf,
+        estado_extenso,
+        local_evento,
+        categorias,
+        contato,
+        ""
+    ]
+
+    linha_macro_preview = {
+        "Nº": "",
+        "Data": data_evento_visual,
+        "Data inicial": data_inicial,
+        "Data final": data_final,
+        "Torneio": torneio,
+        "Cidade": cidade_uf,
+        "Estado": estado_extenso,
+        "Local": local_evento,
+        "Categorias": categorias,
+        "Contato": contato,
+        "Status": ""
+    }
+
+    st.write("**Nome sugerido do arquivo:**", nome_arquivo if nome_arquivo else "-")
+
+    df_preview = pd.DataFrame([linha_macro_preview])
+    st.dataframe(df_preview, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    erros = []
+
+    if not texto_confirmado.strip():
+        erros.append("Cole o texto confirmado.")
+    if flyer_final is None:
+        erros.append("Envie o flyer final.")
+    if print_post is None:
+        erros.append("Envie o print do post.")
+    if not agenda:
+        erros.append("Selecione a agenda.")
+    if not mes_1:
+        erros.append("Selecione o mês principal.")
+    if virada_mes and not mes_2:
+        erros.append("Selecione o segundo mês.")
+    if not data_evento_visual:
+        erros.append("Não foi possível identificar a data.")
+    if not torneio:
+        erros.append("Não foi possível identificar o torneio.")
+    if not cidade_uf:
+        erros.append("Não foi possível identificar Cidade/ES.")
+    if not estado_extenso:
+        erros.append("Não foi possível identificar o estado por extenso.")
+    if not local_evento:
+        erros.append("Não foi possível identificar o local.")
+    if not categorias or categorias == "não encontrado":
+        erros.append("Não foi possível identificar as categorias.")
+    if not contato or contato == "não encontrado":
+        erros.append("Não foi possível identificar o contato.")
+    if not nome_arquivo:
+        erros.append("Não foi possível gerar o nome automático do flyer.")
+    if not data_inicial:
+        erros.append("Não foi possível identificar a data inicial.")
+    if not data_final:
+        erros.append("Não foi possível identificar a data final.")
+    if not drive_conectado():
+        erros.append("Conecte o Google Drive antes de salvar.")
+
+    salvamento_atual_fingerprint = gerar_fingerprint_salvamento(
+        texto_confirmado=texto_confirmado,
+        agenda=agenda,
+        mes_1=mes_1,
+        mes_2=mes_2,
+        flyer_final=flyer_final,
+        print_post=print_post
+    )
+
+    if st.button("Validar linha final", key="btn_validar_linha_final"):
+        if erros:
+            st.error("A linha final ainda não está pronta.")
+            for erro in erros:
+                st.write(f"- {erro}")
+        else:
+            st.success("Linha validada com sucesso.")
+
+    if st.button("Salvar na Google Sheet e no Drive", key="btn_salvar_completo"):
+        if erros:
+            st.error("Não foi possível salvar porque ainda há pendências.")
+            for erro in erros:
+                st.write(f"- {erro}")
+        elif st.session_state["ultimo_salvamento_fingerprint"] == salvamento_atual_fingerprint:
+            st.warning("Este torneio já foi salvo nesta sessão. Altere algum dado antes de tentar salvar novamente.")
+        else:
+            client_gs = None
+
+            status_print = "❌"
+            status_sheet = "❌"
+            status_flyer = "❌"
+
+            erro_print = ""
+            erro_sheet = ""
+            erro_flyer = ""
+            nome_flyer_final = ""
+            nome_print_final = ""
+
+            try:
+                client_gs = conectar_gsheet()
+                drive_service = conectar_drive_usuario()
+
+                # 1. SALVAR PRINT
+                try:
+                    nome_print_final = gerar_nome_flyer(print_post, f"{nome_arquivo} - PRINT")
+                    pasta_torneios_mes_1 = obter_id_pasta_torneios(mes_1, agenda)
+                    upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_1, nome_arquivo=nome_print_final)
+
+                    if virada_mes and mes_2 and mes_2 != mes_1:
+                        pasta_torneios_mes_2 = obter_id_pasta_torneios(mes_2, agenda)
+                        upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_2, nome_arquivo=nome_print_final)
+
+                    status_print = "✅"
+                except Exception as e:
+                    erro_print = repr(e)
+
+                # 2. SALVAR NA PLANILHA
+                try:
+                    planilha = obter_planilha_por_agenda(client_gs, agenda)
+                    salvar_linha_na_aba(planilha, mes_1, linha_macro)
+
+                    if virada_mes and mes_2 and mes_2 != mes_1:
+                        salvar_linha_na_aba(planilha, mes_2, linha_macro)
+
+                    status_sheet = "✅"
+                except Exception as e:
+                    erro_sheet = repr(e)
+
+                # 3. SALVAR FLYER
+                try:
+                    nome_flyer_final = gerar_nome_flyer(flyer_final, nome_arquivo)
+                    pasta_flyers_mes_1 = obter_id_pasta_flyers(mes_1)
+                    upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_1, nome_arquivo=nome_flyer_final)
+
+                    if virada_mes and mes_2 and mes_2 != mes_1:
+                        pasta_flyers_mes_2 = obter_id_pasta_flyers(mes_2)
+                        upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_2, nome_arquivo=nome_flyer_final)
+
+                    status_flyer = "✅"
+                except Exception as e:
+                    erro_flyer = repr(e)
+
+                # 4. LOG
+                erros_consolidados = []
+                if erro_print:
+                    erros_consolidados.append(f"PRINT: {erro_print}")
+                if erro_sheet:
+                    erros_consolidados.append(f"GOOGLE_SHEET: {erro_sheet}")
+                if erro_flyer:
+                    erros_consolidados.append(f"FLYER: {erro_flyer}")
+
+                status_final = "SUCESSO" if (
+                    status_print == "✅" and status_sheet == "✅" and status_flyer == "✅"
+                ) else "ERRO"
+
+                try:
+                    registrar_log(
+                        client_gs=client_gs,
+                        torneio=torneio,
+                        cidade=cidade_uf,
+                        data_evento=data_evento_visual,
+                        agenda=agenda,
+                        mes_1=mes_1,
+                        mes_2=mes_2,
+                        nome_flyer=nome_flyer_final if nome_flyer_final else nome_arquivo,
+                        status=status_final,
+                        erro=" | ".join(erros_consolidados)
+                    )
+                except Exception:
+                    pass
+
+                st.session_state["ultimo_salvamento_fingerprint"] = salvamento_atual_fingerprint
+
+                st.divider()
+                st.markdown("### Resultado do registro")
+                st.write(f'Print salvo na pasta "Torneios" {status_print}')
+                st.write(f"Inclusão na Google Sheet {status_sheet}")
+                st.write(f'Flyer salvo na pasta "Fazer" {status_flyer}')
+
+                if status_final == "SUCESSO":
+                    st.success("Registro concluído com sucesso.")
+                else:
+                    st.warning("Uma ou mais etapas falharam. Consulte a aba LOG para verificar o motivo.")
+
+            except Exception as e:
+                if client_gs is not None:
+                    try:
+                        registrar_log(
+                            client_gs=client_gs,
+                            torneio=torneio,
+                            cidade=cidade_uf,
+                            data_evento=data_evento_visual,
+                            agenda=agenda,
+                            mes_1=mes_1,
+                            mes_2=mes_2,
+                            nome_flyer=flyer_final.name if flyer_final else "",
+                            status="ERRO",
+                            erro=repr(e)
+                        )
+                    except Exception:
+                        pass
+
+                st.error("Erro geral no processo.")
+                st.code(repr(e))
+
+# =========================================
+# TELA 4 — MENSAGEM DE ORGANIZADORES (NOVO)
+# Substitui o agente do ChatGPT
+# =========================================
+with aba4:
+    st.subheader("Tela 4 — Mensagem para organizadores")
+    st.write(
+        "Gera automaticamente a mensagem consolidada para a lista de transmissão de organizadores. "
+        "Informe os dados abaixo após postar as agendas."
+    )
+
+    st.divider()
+
+    st.markdown("### 1. Links das postagens")
+
+    link_sul_org = st.text_input(
+        "Link da postagem — Agenda Sul e Sudeste",
+        placeholder="https://www.instagram.com/p/...",
+        key="link_sul_org"
+    )
+
+    link_norte_org = st.text_input(
+        "Link da postagem — Agenda Norte/Nordeste/Centro-Oeste",
+        placeholder="https://www.instagram.com/p/...",
+        key="link_norte_org"
+    )
+
+    st.divider()
+
+    st.markdown("### 2. Totais acumulados na agenda")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        nome_mes1_org = st.selectbox(
+            "Mês 1",
+            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
+            key="nome_mes1_org"
+        )
+        total_mes1_org = st.number_input(
+            "Total de torneios do Mês 1 (acumulado na agenda)",
+            min_value=0, value=0, step=1, key="total_mes1_org"
+        )
+
+    with col2:
+        nome_mes2_org = st.selectbox(
+            "Mês 2",
+            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
+            index=1,
+            key="nome_mes2_org"
+        )
+        total_mes2_org = st.number_input(
+            "Total de torneios do Mês 2 (acumulado na agenda)",
+            min_value=0, value=0, step=1, key="total_mes2_org"
+        )
+
+    st.divider()
+
+    st.markdown("### 3. Novos torneios por estado (cole o conteúdo dos arquivos gerados)")
+    st.caption("Cole o conteúdo dos arquivos mensagens_whatsapp_sul.txt e mensagens_whatsapp_norte.txt")
+
+    texto_sul_org = st.text_area(
+        "Conteúdo de mensagens_whatsapp_sul.txt",
+        height=200,
+        key="texto_sul_org",
+        placeholder="Cole aqui o conteúdo do arquivo SUL..."
+    )
+
+    texto_norte_org = st.text_area(
+        "Conteúdo de mensagens_whatsapp_norte.txt",
+        height=200,
+        key="texto_norte_org",
+        placeholder="Cole aqui o conteúdo do arquivo NORTE..."
+    )
+
+    st.divider()
+
+    if st.button("Gerar mensagem de organizadores", key="btn_gerar_msg_org"):
+        erros_org = []
+        if not link_sul_org.strip():
+            erros_org.append("Informe o link da agenda Sul.")
+        if not link_norte_org.strip():
+            erros_org.append("Informe o link da agenda Norte.")
+        if not texto_sul_org.strip():
+            erros_org.append("Cole o conteúdo do arquivo SUL.")
+        if not texto_norte_org.strip():
+            erros_org.append("Cole o conteúdo do arquivo NORTE.")
+
+        if erros_org:
+            st.error("Preencha todos os campos:")
+            for e in erros_org:
+                st.write(f"- {e}")
+        else:
+            with st.spinner("Gerando mensagem com Claude..."):
+                mensagem_org = gerar_mensagem_organizadores_claude(
+                    texto_sul=texto_sul_org,
+                    texto_norte=texto_norte_org,
+                    link_sul=link_sul_org.strip(),
+                    link_norte=link_norte_org.strip(),
+                    total_mes1=str(int(total_mes1_org)),
+                    total_mes2=str(int(total_mes2_org)),
+                    nome_mes1=nome_mes1_org,
+                    nome_mes2=nome_mes2_org,
+                )
+
+            st.divider()
+            st.subheader("Mensagem pronta para organizadores")
+            st.text_area(
+                "Copie e envie para a lista de transmissão de organizadores",
+                value=mensagem_org,
+                height=500,
+                key="msg_org_pronta"
+            )
+
+# =========================================
+# TELA 5 — LIMPEZA PÓS-ATUALIZAÇÃO
+# =========================================
+with aba5:
+    st.subheader("Tela 5 — Limpeza pós-atualização")
+    st.write("Execute a limpeza somente após concluir toda a atualização da ANT e a organização dos arquivos.")
+
+    st.divider()
+
+    st.markdown("### 1. Meses atualizados na ANT")
+
+    meses_limpeza = st.multiselect(
+        "Indique abaixo os meses atualizados na ANT",
+        options=meses_validos,
+        key="meses_limpeza"
+    )
+
+    st.divider()
+
+    st.markdown("### 2. Confirmações obrigatórias")
+
+    conf_sheet = st.checkbox(
+        "Confirmo que os dados das Google Sheets SUL e NORTE já foram inseridos na ANT",
+        key="conf_sheet_limpeza"
+    )
+
+    conf_prints = st.checkbox(
+        "Confirmo que os prints dos torneios NORTE e SUL já foram baixados para as pastas de atualização da ANT",
+        key="conf_prints_limpeza"
+    )
+
+    conf_flyers = st.checkbox(
+        "Confirmo que os flyers das pastas Fazer já foram baixados para a pasta Flyers_Montagem",
+        key="conf_flyers_limpeza"
+    )
+
+    conf_final = st.checkbox(
+        "Entendo que esta ação apagará os dados e arquivos dos meses selecionados",
+        key="conf_final_limpeza"
+    )
+
+    st.divider()
+
+    if st.button("Executar limpeza dos meses selecionados", key="btn_executar_limpeza"):
+        erros_limpeza = []
+
+        if not meses_limpeza:
+            erros_limpeza.append("Selecione ao menos um mês.")
+        if not conf_sheet:
+            erros_limpeza.append("Confirme que os dados das Google Sheets já foram inseridos na ANT.")
+        if not conf_prints:
+            erros_limpeza.append("Confirme que os prints dos torneios já foram baixados.")
+        if not conf_flyers:
+            erros_limpeza.append("Confirme que os flyers das pastas Fazer já foram baixados.")
+        if not conf_final:
+            erros_limpeza.append("Marque a confirmação final de limpeza.")
+        if not drive_conectado():
+            erros_limpeza.append("Conecte o Google Drive antes de executar a limpeza.")
+
+        if erros_limpeza:
+            st.error("A limpeza não pode ser executada porque ainda há pendências.")
+            for erro in erros_limpeza:
+                st.write(f"- {erro}")
+        else:
+            client_gs = None
+            relatorio_limpeza = []
+            erros_consolidados = []
+
+            try:
+                client_gs = conectar_gsheet()
+                drive_service = conectar_drive_usuario()
+
+                planilha_sul = obter_planilha_por_agenda(client_gs, "SUL")
+                planilha_norte = obter_planilha_por_agenda(client_gs, "NORTE")
+
+                for mes in meses_limpeza:
+                    mes_nome = nome_mes_sem_numero(mes)
+
+                    for agenda_limpeza, planilha_limpeza in [("SUL", planilha_sul), ("NORTE", planilha_norte)]:
+                        try:
+                            qtd = limpar_aba_mantendo_cabecalho(planilha_limpeza, mes)
+                            relatorio_limpeza.append(f"Google Sheet {agenda_limpeza} - {mes_nome} ✅ ({qtd} linha(s) limpa(s))")
+                        except Exception as e:
+                            relatorio_limpeza.append(f"Google Sheet {agenda_limpeza} - {mes_nome} ❌")
+                            erros_consolidados.append(f"GOOGLE_SHEET_{agenda_limpeza}_{mes_nome.upper()}: {repr(e)}")
+
+                        try:
+                            pasta_torneios = obter_id_pasta_torneios(mes, agenda_limpeza)
+                            qtd_t = excluir_arquivos_pasta_drive(drive_service, pasta_torneios)
+                            relatorio_limpeza.append(f"Pasta Torneios {agenda_limpeza} - {mes_nome} ✅ ({qtd_t} arquivo(s) excluído(s))")
+                        except Exception as e:
+                            relatorio_limpeza.append(f"Pasta Torneios {agenda_limpeza} - {mes_nome} ❌")
+                            erros_consolidados.append(f"TORNEIOS_{agenda_limpeza}_{mes_nome.upper()}: {repr(e)}")
+
+                    try:
+                        pasta_flyers = obter_id_pasta_flyers(mes)
+                        qtd_f = excluir_arquivos_pasta_drive(drive_service, pasta_flyers)
+                        relatorio_limpeza.append(f"Pasta Flyers Fazer - {mes_nome} ✅ ({qtd_f} arquivo(s) excluído(s))")
+                    except Exception as e:
+                        relatorio_limpeza.append(f"Pasta Flyers Fazer - {mes_nome} ❌")
+                        erros_consolidados.append(f"FLYERS_FAZER_{mes_nome.upper()}: {repr(e)}")
+
+                status_limpeza = "SUCESSO" if not erros_consolidados else "ERRO"
+
+                try:
+                    registrar_log(
+                        client_gs=client_gs,
+                        torneio="LIMPEZA_POS_ATUALIZACAO",
+                        cidade="-",
+                        data_evento=", ".join(meses_limpeza),
+                        agenda="SUL/NORTE",
+                        mes_1=", ".join(meses_limpeza),
+                        mes_2="",
+                        nome_flyer="-",
+                        status=status_limpeza,
+                        erro=" | ".join(erros_consolidados)
+                    )
+                except Exception:
+                    pass
+
+                st.divider()
+                st.markdown("### Resultado da limpeza")
+
+                for linha in relatorio_limpeza:
+                    st.write(linha)
+
+                if status_limpeza == "SUCESSO":
+                    st.success("Limpeza concluída com sucesso para todos os meses selecionados.")
+                else:
+                    st.warning("A limpeza foi executada parcialmente. Consulte a aba LOG para verificar os detalhes.")
+
+            except Exception as e:
+                if client_gs is not None:
+                    try:
+                        registrar_log(
+                            client_gs=client_gs,
+                            torneio="LIMPEZA_POS_ATUALIZACAO",
+                            cidade="-",
+                            data_evento=", ".join(meses_limpeza) if meses_limpeza else "",
+                            agenda="SUL/NORTE",
+                            mes_1=", ".join(meses_limpeza) if meses_limpeza else "",
+                            mes_2="",
+                            nome_flyer="-",
+                            status="ERRO",
+                            erro=repr(e)
+                        )
+                    except Exception:
+                        pass
+
+                st.error("Erro geral ao executar a limpeza.")
+                st.code(repr(e))
