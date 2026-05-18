@@ -714,23 +714,54 @@ def capitalizar_texto_inteligente(texto):
     return "".join(resultado)
 
 
+def normalizar_imagem_para_api(uploaded_file):
+    """
+    Normaliza qualquer imagem para JPEG RGB antes de enviar à API Anthropic.
+    Resolve problemas com fotos de celular (HEIC, HEIF, PNG com transparência,
+    imagens com perfil de cor incompatível, metadados excessivos, etc).
+    Retorna (bytes_jpeg, "image/jpeg").
+    """
+    try:
+        bytes_originais = uploaded_file.getvalue()
+        img = Image.open(io.BytesIO(bytes_originais))
+
+        if img.mode in ("RGBA", "LA", "P"):
+            fundo = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            fundo.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+            img = fundo
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=92, optimize=True)
+        buffer.seek(0)
+        return buffer.getvalue(), "image/jpeg"
+
+    except Exception:
+        bytes_originais = uploaded_file.getvalue()
+        mime = uploaded_file.type or "image/jpeg"
+        mapa = {
+            "image/jpeg": "image/jpeg",
+            "image/jpg": "image/jpeg",
+            "image/png": "image/png",
+            "image/gif": "image/gif",
+            "image/webp": "image/webp",
+        }
+        return bytes_originais, mapa.get(mime, "image/jpeg")
+
+
 def imagem_para_base64(uploaded_file):
-    """Converte imagem para base64 puro (sem data URL prefix) — formato exigido pela API Anthropic."""
-    bytes_imagem = uploaded_file.getvalue()
-    return base64.standard_b64encode(bytes_imagem).decode("utf-8")
+    """Converte imagem normalizada para base64 — formato exigido pela API Anthropic."""
+    bytes_img, _ = normalizar_imagem_para_api(uploaded_file)
+    return base64.standard_b64encode(bytes_img).decode("utf-8")
 
 
 def obter_media_type(uploaded_file):
-    """Retorna o media type correto aceito pela API Anthropic para imagens."""
-    mime = uploaded_file.type or ""
-    mapa = {
-        "image/jpeg": "image/jpeg",
-        "image/jpg": "image/jpeg",
-        "image/png": "image/png",
-        "image/gif": "image/gif",
-        "image/webp": "image/webp",
-    }
-    return mapa.get(mime, "image/jpeg")
+    """Após normalização, o media type é sempre image/jpeg."""
+    _, media_type = normalizar_imagem_para_api(uploaded_file)
+    return media_type
 
 
 def normalizar_ano(ano_texto):
