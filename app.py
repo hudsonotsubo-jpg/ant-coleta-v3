@@ -1730,6 +1730,54 @@ with aba3:
         st.link_button("Conectar Google Drive", url_autorizacao)
 
     st.divider()
+    st.markdown("#### 🔧 Diagnóstico de conexão com Google Sheets")
+    st.caption("Use este botão para identificar erros de acesso às planilhas.")
+    if st.button("Testar conexão com Google Sheets", key="btn_diagnostico_sheets"):
+        try:
+            client_gs = conectar_gsheet()
+            st.success("✅ Service Account autenticada com sucesso.")
+        except Exception as e:
+            st.error("❌ Falha na autenticação da Service Account.")
+            st.code(repr(e))
+            st.stop()
+        try:
+            planilha_log = obter_planilha_log(client_gs)
+            st.success(f"✅ Planilha LOG encontrada: {planilha_log.title}")
+        except Exception as e:
+            st.error("❌ Planilha LOG não encontrada. Verifique o GOOGLE_SHEET_ID_LOG e o compartilhamento.")
+            st.code(repr(e))
+            st.stop()
+        try:
+            aba = obter_aba_config(client_gs)
+            st.success("✅ Aba CONFIG_APP encontrada e acessível.")
+        except Exception as e:
+            st.error("❌ Aba CONFIG_APP não encontrada ou sem permissão de escrita.")
+            st.code(repr(e))
+            st.stop()
+        try:
+            token_info = st.session_state.get("drive_token_info")
+            if token_info:
+                salvar_token_drive_persistido(token_info)
+                st.success("✅ Token do Drive salvo na CONFIG_APP com sucesso.")
+            else:
+                st.warning("⚠️ Drive não conectado ainda. Conecte o Drive primeiro, depois teste novamente.")
+        except Exception as e:
+            st.error("❌ Falha ao salvar o token na CONFIG_APP.")
+            st.code(repr(e))
+        try:
+            planilha_sul = obter_planilha_por_agenda(client_gs, "SUL")
+            st.success(f"✅ Planilha SUL encontrada: {planilha_sul.title}")
+        except Exception as e:
+            st.error("❌ Planilha SUL não encontrada.")
+            st.code(repr(e))
+        try:
+            planilha_norte = obter_planilha_por_agenda(client_gs, "NORTE")
+            st.success(f"✅ Planilha NORTE encontrada: {planilha_norte.title}")
+        except Exception as e:
+            st.error("❌ Planilha NORTE não encontrada.")
+            st.code(repr(e))
+
+    st.divider()
 
     st.markdown("### 4. Pré-visualização da linha da macro")
 
