@@ -386,28 +386,36 @@ def processar_callback_oauth_drive():
 
     try:
         token_data = trocar_code_por_token(code)
-
-        token_info = {
-            "token": token_data.get("access_token"),
-            "refresh_token": token_data.get("refresh_token"),
-            "token_uri": GOOGLE_TOKEN_URI,
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "scopes": SCOPES_DRIVE_OAUTH,
-        }
-
-        st.session_state["drive_token_info"] = token_info
-        salvar_token_drive_persistido(token_info)
-
-        st.session_state["drive_oauth_state"] = None
-        limpar_query_params()
-        st.success("Google Drive conectado com sucesso.")
-        st.rerun()
-
     except Exception as e:
-        st.error("Não foi possível concluir a autenticação do Google Drive.")
+        st.error("Falha ao trocar o código de autorização pelo token do Google.")
         st.code(repr(e))
         limpar_query_params()
+        return
+
+    token_info = {
+        "token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),
+        "token_uri": GOOGLE_TOKEN_URI,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "scopes": SCOPES_DRIVE_OAUTH,
+    }
+
+    st.session_state["drive_token_info"] = token_info
+    st.session_state["drive_oauth_state"] = None
+    limpar_query_params()
+
+    try:
+        salvar_token_drive_persistido(token_info)
+    except Exception as e:
+        st.warning(
+            "Google Drive conectado, mas não foi possível persistir o token na planilha LOG. "
+            "Você precisará reconectar o Drive se recarregar a página."
+        )
+        st.code(f"Erro ao salvar token: {repr(e)}")
+
+    st.success("Google Drive conectado com sucesso.")
+    st.rerun()
 
 
 def obter_credenciais_drive_usuario():
