@@ -1807,15 +1807,24 @@ with aba2:
 
                     # Perfis com link direto
                     st.divider()
-                    st.markdown("**Abra o direct e verifique o histórico:**")
+                    st.markdown("**Abra o perfil, verifique o histórico e inicie o direct:**")
                     for perfil in perfis:
                         perfil_limpo = perfil.lstrip("@")
-                        url = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
-                        st.link_button(f"📩 Abrir direct — {perfil}", url)
+                        url_perfil = f"https://www.instagram.com/{perfil_limpo}/"
+                        st.link_button(f"👤 Abrir perfil — {perfil}", url_perfil)
 
                     # Parágrafos separados
                     st.divider()
                     tipo_final = fila[idx]["tipo"]
+                    pendencias_item = listar_pendencias_lote(campos)
+                    if pendencias_item:
+                        st.warning(
+                            "⚠️ Informações incompletas: **"
+                            + ", ".join(pendencias_item)
+                            + "**. A mensagem já reflete as pendências."
+                        )
+                    else:
+                        st.success("✅ Todas as informações encontradas.")
                     paragrafos = montar_paragrafos_direct(campos, tipo_final)
                     st.markdown("**Copie e envie parágrafo por parágrafo:**")
                     for i_p, paragrafo in enumerate(paragrafos, start=1):
