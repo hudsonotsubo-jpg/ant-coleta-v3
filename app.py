@@ -25,41 +25,6 @@ from googleapiclient.http import MediaIoBaseUpload
 st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
-# =========================================
-# HELPER — BOTÃO COPIAR
-# =========================================
-def botao_copiar(texto: str, label: str = "Copiar texto", key: str = "copiar"):
-    """
-    Renderiza um botão que copia o texto para a área de transferência.
-    Usa st.button nativo + st.session_state para evitar problemas de encoding.
-    """
-    if st.button(f"📋 {label}", key=f"btn_{key}"):
-        st.session_state[f"_copiado_{key}"] = True
-
-    if st.session_state.get(f"_copiado_{key}"):
-        st.toast("✅ Texto copiado!", icon="✅")
-        # Usa javascript via markdown para copiar
-        texto_escaped = texto.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
-        st.markdown(
-            f"""<script>
-            (function() {{
-                var text = `{texto_escaped}`;
-                if (navigator.clipboard && window.isSecureContext) {{
-                    navigator.clipboard.writeText(text);
-                }} else {{
-                    var t = document.createElement('textarea');
-                    t.value = text;
-                    document.body.appendChild(t);
-                    t.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(t);
-                }}
-            }})();
-            </script>""",
-            unsafe_allow_html=True
-        )
-        st.session_state[f"_copiado_{key}"] = False
-
 
 # =========================================
 # HELPERS DE SECRETS
@@ -1640,15 +1605,8 @@ with aba1:
             st.divider()
             st.subheader("Mensagem pronta")
 
-            st.text_area(
-                "Copie e envie ao organizador",
-                value=mensagem,
-                height=250,
-                key="mensagem_pronta"
-            )
-
-
-            botao_copiar(mensagem, label="Copiar texto", key="tela1")
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+            st.code(mensagem, language=None)
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1710,14 +1668,8 @@ with aba2:
             st.divider()
             st.subheader("Mensagens prontas para envio")
 
-            st.text_area(
-                "Todos os torneios",
-                value=texto_consolidado,
-                height=600,
-                key="blocos_lote_consolidados"
-            )
-
-            botao_copiar(texto_consolidado, label="Copiar todas as mensagens", key="tela2")
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+            st.code(texto_consolidado, language=None)
 
 # =========================================
 # TELA 3 — REGISTRO FINAL DO TORNEIO
