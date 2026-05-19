@@ -1192,7 +1192,20 @@ def extrair_campos_lote(texto):
     categorias = re.search(r"Categorias:\s*(.*)", texto, re.IGNORECASE)
     contato = re.search(r"Contato:\s*(.*)", texto, re.IGNORECASE)
 
+    contato_val = limpar_espacos(contato.group(1)) if contato else ""
     igs = extrair_instagrams_de_texto(instagrams.group(1)) if instagrams else []
+
+    # Fallback: se o campo Instagrams estiver vazio mas o Contato for um @perfil,
+    # usa o contato como Instagram de destino para o direct
+    if not igs and contato_val.startswith("@"):
+        igs = [contato_val]
+
+    # Garante que o @perfil do contato esteja sempre na lista de instagrams
+    # (pode estar no contato mas não ter aparecido no campo Instagrams)
+    if contato_val.startswith("@"):
+        contato_lower = contato_val.lower()
+        if not any(ig.lower() == contato_lower for ig in igs):
+            igs.insert(0, contato_val)
 
     return {
         "instagrams": igs,
@@ -1201,7 +1214,7 @@ def extrair_campos_lote(texto):
         "cidade_uf": limpar_espacos(cidade.group(1)) if cidade else "",
         "local": limpar_espacos(local.group(1)) if local else "",
         "categorias": limpar_espacos(categorias.group(1)) if categorias else "",
-        "contato": limpar_espacos(contato.group(1)) if contato else "",
+        "contato": contato_val,
     }
 
 
@@ -1256,35 +1269,73 @@ def listar_pendencias_lote(campos):
     return [campo for campo, valor in bloco.items() if not valor or valor == "não encontrado"]
 
 
-def montar_mensagem_direct_lote(campos):
-    perfis_txt = formatar_instagrams_bloco(campos.get("instagrams", []))
+def extrair_mes_do_campo_data(data_val: str) -> str:
+    """Extrai o nome do mês a partir da data visual (ex: '10/06/26' → 'junho')."""
+    meses = {
+        "01": "janeiro", "02": "fevereiro", "03": "março",
+        "04": "abril", "05": "maio", "06": "junho",
+        "07": "julho", "08": "agosto", "09": "setembro",
+        "10": "outubro", "11": "novembro", "12": "dezembro",
+    }
+    # Tenta extrair o mês do formato dd/mm/yy ou dd/mm/yyyy
+    m = re.search(r"\d{1,2}/(\d{2})/\d{2,4}", data_val or "")
+    if m:
+        return meses.get(m.group(1).zfill(2), "")
+    return ""
+
+
+def montar_paragrafos_direct(campos: dict, tipo: str) -> list:
+    """
+    Monta a mensagem de direct como lista de parágrafos separados.
+    tipo: "recorrente" ou "novo"
+    Retorna lista de strings — cada item é um parágrafo para envio separado.
+    """
     bloco_info = montar_bloco_informacoes_lote(campos)
     pendencias = listar_pendencias_lote(campos)
+    mes = extrair_mes_do_campo_data(campos.get("data", ""))
+    mes_txt = f" de {mes}" if mes else ""
+
+    if tipo == "novo":
+        abertura = [
+            "Fala pessoal!\nTudo bem?",
+            "Trabalhamos com a divulgação de torneios de futevôlei de todo o Brasil, "
+            "através da Agenda Nacional de Torneios.",
+            "Gostariam de divulgar o torneio de vocês na nossa página de forma GRATUITA?",
+        ]
+    else:  # recorrente
+        abertura = [
+            "Fala pessoal!\nTudo bem?",
+            f"Bora divulgar o torneio{mes_txt} na Agenda Nacional de Torneios?",
+        ]
 
     if not pendencias:
-        return (
-            f"{perfis_txt}\n\n"
-            f"Fala pessoal!\n"
-            f"Tudo bem?\n\n"
-            f"Bora divulgar o torneio de vocês na Agenda Nacional de Torneios?\n\n"
-            f"Preciso apenas que me confirme as informações do evento:\n\n"
-            f"{bloco_info}\n\n"
-            f"Se estiver tudo ok, é só me enviar o flyer do torneio que incluiremos na ANT!"
-        )
+        return abertura + [
+            "Preciso apenas que confirmem as informações do evento.",
+            bloco_info,
+            "Se estiver tudo ok, é só me enviar a arte de divulgação do evento "
+            "que incluiremos na ANT!",
+        ]
+    else:
+        if len(pendencias) == 1:
+            falta_txt = f"Falta apenas: {pendencias[0].lower()}."
+        else:
+            itens = ", ".join(p.lower() for p in pendencias[:-1])
+            falta_txt = f"Faltam apenas: {itens} e {pendencias[-1].lower()}."
 
-    titulo_falta = "Falta apenas a informação abaixo:" if len(pendencias) == 1 else "Faltam apenas as informações abaixo:"
-    faltas_txt = "\n".join([f"- {item}:" for item in pendencias])
+        return abertura + [
+            f"Já peguei quase todas as informações necessárias do post de vocês. {falta_txt}",
+            bloco_info,
+            "Agradeço se puder me enviar essa informação e a arte de divulgação "
+            "do evento para repostarmos aqui!",
+        ]
 
-    return (
-        f"{perfis_txt}\n\n"
-        f"{bloco_info}\n\n"
-        f"Fala pessoal!\n"
-        f"Tudo bem?\n\n"
-        f"Bora divulgar o torneio de vocês na Agenda Nacional de Torneios?\n\n"
-        f"Já peguei quase todas as informações necessárias do post de vocês.\n"
-        f"{titulo_falta}\n\n"
-        f"{faltas_txt}"
-    )
+
+def montar_mensagem_direct_lote(campos, tipo="novo"):
+    """Mantém compatibilidade com o fluxo da Tela 2 (texto consolidado)."""
+    perfis_txt = formatar_instagrams_bloco(campos.get("instagrams", []))
+    paragrafos = montar_paragrafos_direct(campos, tipo)
+    corpo = "\n\n".join(paragrafos)
+    return f"{perfis_txt}\n\n{corpo}"
 
 
 # =========================================
@@ -1547,12 +1598,13 @@ carregar_token_persistido_na_sessao()
 st.title("🏆 APP ANT v2")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
 
-aba1, aba2, aba3, aba4, aba5 = st.tabs([
+aba1, aba2, aba3, aba4, aba5, aba6 = st.tabs([
     "Extração individual",
     "Extração em lote",
     "Registro final do torneio",
     "Msg. Organizadores",
     "Limpeza pós-atualização",
+    "Envio de Directs",
 ])
 
 # =========================================
@@ -2298,3 +2350,143 @@ with aba5:
 
                 st.error("Erro geral ao executar a limpeza.")
                 st.code(repr(e))
+
+
+# =========================================
+# TELA 6 — ENVIO DE DIRECTS
+# =========================================
+with aba6:
+    st.subheader("Tela 6 — Envio de Directs")
+    st.write(
+        "Cole os blocos gerados pela Tela 2 e monte a fila de directs. "
+        "Cada parágrafo é exibido separadamente para envio no ritmo certo."
+    )
+
+    st.divider()
+
+    texto_directs = st.text_area(
+        "Cole aqui o texto completo gerado pela Tela 2",
+        height=180,
+        key="texto_directs_input",
+        placeholder="Cole o conteúdo copiado da Tela 2..."
+    )
+
+    tipo_contato_global = st.radio(
+        "Tipo de contato padrão para esta sessão",
+        options=["Novo contato", "Recorrente"],
+        horizontal=True,
+        key="tipo_contato_global",
+        help="Você poderá ajustar individualmente para cada torneio na fila."
+    )
+
+    if st.button("Montar fila de directs", key="btn_montar_fila"):
+        if not texto_directs.strip():
+            st.error("Cole o texto gerado pela Tela 2 antes de continuar.")
+        else:
+            separador_bloco = "—" * 40
+            blocos_raw = texto_directs.split(separador_bloco)
+            blocos_raw = [b.strip() for b in blocos_raw if b.strip()]
+
+            fila = []
+            for bloco in blocos_raw:
+                linhas_bloco = bloco.strip().splitlines()
+
+                perfis = []
+                idx_msg = 0
+                for i, linha in enumerate(linhas_bloco):
+                    if linha.strip().startswith("@"):
+                        perfis.extend(extrair_instagrams_de_texto(linha))
+                        idx_msg = i + 1
+                    else:
+                        idx_msg = i
+                        break
+
+                # Reconstrói campos a partir do bloco de texto
+                bloco_campos = "\n".join(linhas_bloco[idx_msg:]).strip()
+                campos_extraidos = extrair_campos_confirmados(bloco_campos)
+                campos_extraidos["instagrams"] = perfis
+
+                if perfis:
+                    fila.append({
+                        "perfis": perfis,
+                        "campos": campos_extraidos,
+                        "tipo": "novo" if tipo_contato_global == "Novo contato" else "recorrente",
+                    })
+
+            if not fila:
+                st.warning("Nenhum bloco com perfil @instagram encontrado. Verifique o texto colado.")
+            else:
+                st.success(f"Fila montada: {len(fila)} direct(s) para enviar.")
+                st.session_state["fila_directs"] = fila
+                st.session_state["fila_idx"] = 0
+                st.rerun()
+
+    # Exibe a fila se existir
+    if st.session_state.get("fila_directs"):
+        fila = st.session_state["fila_directs"]
+        idx = st.session_state.get("fila_idx", 0)
+        total = len(fila)
+
+        st.divider()
+
+        if idx < total:
+            item = fila[idx]
+            perfis = item["perfis"]
+            campos = item["campos"]
+            tipo_item = item["tipo"]
+
+            st.markdown(f"### Direct {idx + 1} de {total}")
+            st.progress((idx + 1) / total)
+            st.caption(f"Progresso: {idx + 1}/{total}")
+
+            # Seletor de tipo por torneio
+            col_tipo, col_nav = st.columns([2, 1])
+            with col_tipo:
+                tipo_escolhido = st.radio(
+                    "Tipo de contato",
+                    options=["Novo contato", "Recorrente"],
+                    index=0 if tipo_item == "novo" else 1,
+                    horizontal=True,
+                    key=f"tipo_item_{idx}",
+                )
+                fila[idx]["tipo"] = "novo" if tipo_escolhido == "Novo contato" else "recorrente"
+
+            with col_nav:
+                c1, c2 = st.columns(2)
+                with c1:
+                    if idx > 0:
+                        if st.button("← Anterior", key="btn_anterior"):
+                            st.session_state["fila_idx"] = idx - 1
+                            st.rerun()
+                with c2:
+                    if idx < total - 1:
+                        if st.button("Próximo →", key="btn_proximo", type="primary"):
+                            st.session_state["fila_idx"] = idx + 1
+                            st.rerun()
+                    else:
+                        st.success("Último!")
+
+            st.divider()
+
+            # Perfis e link de abertura do direct
+            st.markdown("**Perfis para envio:**")
+            for perfil in perfis:
+                perfil_limpo = perfil.lstrip("@")
+                url_direct = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
+                st.link_button(f"📩 Abrir direct com {perfil}", url_direct)
+
+            st.divider()
+
+            # Gera parágrafos separados
+            tipo_final = fila[idx]["tipo"]
+            paragrafos = montar_paragrafos_direct(campos, tipo_final)
+
+            st.markdown("**Mensagem — copie e envie parágrafo por parágrafo:**")
+            for i_p, paragrafo in enumerate(paragrafos, start=1):
+                st.caption(f"Parágrafo {i_p}")
+                st.code(paragrafo, language=None)
+
+        if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
+            st.session_state["fila_directs"] = []
+            st.session_state["fila_idx"] = 0
+            st.rerun()
