@@ -1611,33 +1611,31 @@ with aba1:
                 key="mensagem_pronta"
             )
 
-            # Botão de copiar com JavaScript
+            # Botão de copiar via JavaScript — usa textarea oculta para compatibilidade mobile
+            import json as _json
+            texto_js = _json.dumps(mensagem)
             st.components.v1.html(
-                f"""
-                <button onclick="
-                    navigator.clipboard.writeText({repr(mensagem)}).then(function() {{
-                        this.textContent = '✅ Copiado!';
-                        this.style.backgroundColor = '#28a745';
-                        setTimeout(() => {{
-                            this.textContent = '📋 Copiar texto';
-                            this.style.backgroundColor = '#0d6efd';
-                        }}, 2000);
-                    }}.bind(this)).catch(function(err) {{
-                        alert('Erro ao copiar: ' + err);
-                    }});
-                " style="
-                    background-color: #0d6efd;
-                    color: white;
-                    border: none;
-                    padding: 10px 20px;
-                    font-size: 15px;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    width: 100%;
-                    margin-top: 4px;
-                ">📋 Copiar texto</button>
-                """,
-                height=50,
+                f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:transparent;">
+<textarea id="txt" style="position:absolute;left:-9999px;top:-9999px;">{mensagem.replace('<','&lt;').replace('>','&gt;')}</textarea>
+<button id="btn" onclick="
+    var t = document.getElementById('txt');
+    if (navigator.clipboard && window.isSecureContext) {{
+        navigator.clipboard.writeText(t.value).then(function() {{
+            document.getElementById('btn').textContent = '✅ Copiado!';
+            setTimeout(function(){{ document.getElementById('btn').textContent = '📋 Copiar texto'; }}, 2000);
+        }});
+    }} else {{
+        t.select();
+        document.execCommand('copy');
+        document.getElementById('btn').textContent = '✅ Copiado!';
+        setTimeout(function(){{ document.getElementById('btn').textContent = '📋 Copiar texto'; }}, 2000);
+    }}
+" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">📋 Copiar texto</button>
+</body>
+</html>""",
+                height=55,
             )
 
 # =========================================
