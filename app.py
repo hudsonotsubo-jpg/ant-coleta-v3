@@ -1687,13 +1687,21 @@ with aba2:
             total = len(prints_lote)
             blocos_lote = []
 
+            campos_lote_extraidos = []
+
             for i, img in enumerate(prints_lote, start=1):
                 status_extracao.caption(f"Extraindo torneio {i} de {total}...")
                 try:
                     resultado = extrair_texto_lote_1_torneio(img)
                     campos = extrair_campos_lote(resultado)
                     mensagem_direct = montar_mensagem_direct_lote(campos)
+                    campos_lote_extraidos.append(campos)
                 except Exception as e:
+                    campos = {
+                        "instagrams": [], "data": "", "torneio": "",
+                        "cidade_uf": "", "local": "", "categorias": "",
+                        "contato": f"erro na extração ({repr(e)})"
+                    }
                     mensagem_direct = (
                         "Instagram: não encontrado\n\n"
                         "Data: não encontrado\n"
@@ -1703,6 +1711,7 @@ with aba2:
                         "Categorias: não encontrado\n"
                         f"Contato: erro na extração ({repr(e)})"
                     )
+                    campos_lote_extraidos.append(campos)
 
                 blocos_lote.append({
                     "arquivo": img.name,
@@ -1711,8 +1720,11 @@ with aba2:
 
                 progress.progress(i / total)
 
+            # Salva campos estruturados no session_state para uso na Tela 6
+            st.session_state["campos_lote_extraidos"] = campos_lote_extraidos
+
             status_extracao.empty()
-            st.success(f"Extração concluída — {total} torneio(s) processado(s).")
+            st.success(f"Extração concluída — {total} torneio(s) processado(s). Acesse a Tela 6 para enviar os directs.")
 
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
@@ -2352,76 +2364,45 @@ with aba5:
                 st.code(repr(e))
 
 
+
 # =========================================
 # TELA 6 — ENVIO DE DIRECTS
 # =========================================
 with aba6:
     st.subheader("Tela 6 — Envio de Directs")
-    st.write(
-        "Cole os blocos gerados pela Tela 2 e monte a fila de directs. "
-        "Cada parágrafo é exibido separadamente para envio no ritmo certo."
-    )
 
-    st.divider()
+    campos_extraidos = st.session_state.get("campos_lote_extraidos", [])
 
-    texto_directs = st.text_area(
-        "Cole aqui o texto completo gerado pela Tela 2",
-        height=180,
-        key="texto_directs_input",
-        placeholder="Cole o conteúdo copiado da Tela 2..."
-    )
+    if not campos_extraidos:
+        st.info("Extraia os torneios na Tela 2 primeiro. Os dados ficarão disponíveis aqui automaticamente.")
+    else:
+        st.success(f"{len(campos_extraidos)} torneio(s) disponível(eis) para envio.")
 
-    tipo_contato_global = st.radio(
-        "Tipo de contato padrão para esta sessão",
-        options=["Novo contato", "Recorrente"],
-        horizontal=True,
-        key="tipo_contato_global",
-        help="Você poderá ajustar individualmente para cada torneio na fila."
-    )
+        tipo_global = st.radio(
+            "Tipo de contato padrão para esta sessão",
+            options=["Novo contato", "Recorrente"],
+            horizontal=True,
+            key="tipo_contato_global",
+        )
 
-    if st.button("Montar fila de directs", key="btn_montar_fila"):
-        if not texto_directs.strip():
-            st.error("Cole o texto gerado pela Tela 2 antes de continuar.")
-        else:
-            separador_bloco = "—" * 40
-            blocos_raw = texto_directs.split(separador_bloco)
-            blocos_raw = [b.strip() for b in blocos_raw if b.strip()]
-
+        if st.button("Montar fila de directs", key="btn_montar_fila"):
             fila = []
-            for bloco in blocos_raw:
-                linhas_bloco = bloco.strip().splitlines()
-
-                perfis = []
-                idx_msg = 0
-                for i, linha in enumerate(linhas_bloco):
-                    if linha.strip().startswith("@"):
-                        perfis.extend(extrair_instagrams_de_texto(linha))
-                        idx_msg = i + 1
-                    else:
-                        idx_msg = i
-                        break
-
-                # Reconstrói campos a partir do bloco de texto
-                bloco_campos = "\n".join(linhas_bloco[idx_msg:]).strip()
-                campos_extraidos = extrair_campos_confirmados(bloco_campos)
-                campos_extraidos["instagrams"] = perfis
-
-                if perfis:
+            for campos in campos_extraidos:
+                if campos.get("instagrams"):
                     fila.append({
-                        "perfis": perfis,
-                        "campos": campos_extraidos,
-                        "tipo": "novo" if tipo_contato_global == "Novo contato" else "recorrente",
+                        "perfis": campos["instagrams"],
+                        "campos": campos,
+                        "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
                     })
-
             if not fila:
-                st.warning("Nenhum bloco com perfil @instagram encontrado. Verifique o texto colado.")
+                st.warning("Nenhum torneio com @perfil do Instagram identificado.")
             else:
-                st.success(f"Fila montada: {len(fila)} direct(s) para enviar.")
                 st.session_state["fila_directs"] = fila
                 st.session_state["fila_idx"] = 0
+                st.success(f"Fila montada: {len(fila)} direct(s).")
                 st.rerun()
 
-    # Exibe a fila se existir
+    # Exibe a fila
     if st.session_state.get("fila_directs"):
         fila = st.session_state["fila_directs"]
         idx = st.session_state.get("fila_idx", 0)
@@ -2433,19 +2414,18 @@ with aba6:
             item = fila[idx]
             perfis = item["perfis"]
             campos = item["campos"]
-            tipo_item = item["tipo"]
 
             st.markdown(f"### Direct {idx + 1} de {total}")
             st.progress((idx + 1) / total)
-            st.caption(f"Progresso: {idx + 1}/{total}")
+            st.caption(f"Progresso: {idx + 1} de {total}")
 
-            # Seletor de tipo por torneio
+            # Tipo por torneio + navegação
             col_tipo, col_nav = st.columns([2, 1])
             with col_tipo:
                 tipo_escolhido = st.radio(
                     "Tipo de contato",
                     options=["Novo contato", "Recorrente"],
-                    index=0 if tipo_item == "novo" else 1,
+                    index=0 if item["tipo"] == "novo" else 1,
                     horizontal=True,
                     key=f"tipo_item_{idx}",
                 )
@@ -2455,7 +2435,7 @@ with aba6:
                 c1, c2 = st.columns(2)
                 with c1:
                     if idx > 0:
-                        if st.button("← Anterior", key="btn_anterior"):
+                        if st.button("← Ant.", key="btn_anterior"):
                             st.session_state["fila_idx"] = idx - 1
                             st.rerun()
                 with c2:
@@ -2468,16 +2448,16 @@ with aba6:
 
             st.divider()
 
-            # Perfis e link de abertura do direct
-            st.markdown("**Perfis para envio:**")
+            # Perfis com link de abertura do direct
+            st.markdown("**Perfis — clique para abrir o direct:**")
             for perfil in perfis:
                 perfil_limpo = perfil.lstrip("@")
-                url_direct = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
-                st.link_button(f"📩 Abrir direct com {perfil}", url_direct)
+                url = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
+                st.link_button(f"📩 {perfil}", url)
 
             st.divider()
 
-            # Gera parágrafos separados
+            # Parágrafos separados
             tipo_final = fila[idx]["tipo"]
             paragrafos = montar_paragrafos_direct(campos, tipo_final)
 
@@ -2486,6 +2466,7 @@ with aba6:
                 st.caption(f"Parágrafo {i_p}")
                 st.code(paragrafo, language=None)
 
+        st.divider()
         if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
             st.session_state["fila_directs"] = []
             st.session_state["fila_idx"] = 0
