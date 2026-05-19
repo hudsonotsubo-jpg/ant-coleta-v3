@@ -1598,13 +1598,12 @@ carregar_token_persistido_na_sessao()
 st.title("🏆 APP ANT v2")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
 
-aba1, aba2, aba3, aba4, aba5, aba6 = st.tabs([
+aba1, aba2, aba3, aba4, aba5 = st.tabs([
     "Extração individual",
     "Extração em lote",
     "Registro final do torneio",
     "Msg. Organizadores",
     "Limpeza pós-atualização",
-    "Envio de Directs",
 ])
 
 # =========================================
@@ -1665,7 +1664,7 @@ with aba1:
 # =========================================
 with aba2:
     st.subheader("Tela 2 — Extração em lote")
-    st.write("Cada print será tratado como 1 torneio. O app gerará blocos prontos para envio por direct.")
+    st.write("Cada print será tratado como 1 torneio.")
 
     st.divider()
 
@@ -1686,7 +1685,6 @@ with aba2:
             status_extracao = st.empty()
             total = len(prints_lote)
             blocos_lote = []
-
             campos_lote_extraidos = []
 
             for i, img in enumerate(prints_lote, start=1):
@@ -1717,23 +1715,118 @@ with aba2:
                     "arquivo": img.name,
                     "mensagem": mensagem_direct
                 })
-
                 progress.progress(i / total)
 
-            # Salva campos estruturados no session_state para uso na Tela 6
             st.session_state["campos_lote_extraidos"] = campos_lote_extraidos
-
+            st.session_state["blocos_lote"] = blocos_lote
             status_extracao.empty()
-            st.success(f"Extração concluída — {total} torneio(s) processado(s). Acesse a Tela 6 para enviar os directs.")
+            st.success(f"Extração concluída — {total} torneio(s) processado(s).")
+            st.rerun()
 
+    # Exibe resultados se já extraídos
+    if st.session_state.get("campos_lote_extraidos"):
+        campos_lote_extraidos = st.session_state["campos_lote_extraidos"]
+        blocos_lote = st.session_state.get("blocos_lote", [])
+
+        sub_aba_texto, sub_aba_directs = st.tabs(["📋 Texto consolidado", "📩 Envio de directs"])
+
+        # ── Sub-aba 1: texto consolidado ──────────────────────────
+        with sub_aba_texto:
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
-
-            st.divider()
-            st.subheader("Mensagens prontas para envio")
-
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+            st.caption("Clique no ícone 📋 no canto superior direito para copiar")
             st.code(texto_consolidado, language=None)
+
+        # ── Sub-aba 2: envio de directs ────────────────────────────
+        with sub_aba_directs:
+            st.write("Abra o direct de cada perfil, verifique o histórico e escolha o tipo de contato.")
+
+            if "fila_directs" not in st.session_state or not st.session_state["fila_directs"]:
+                tipo_global = st.radio(
+                    "Tipo de contato padrão",
+                    options=["Novo contato", "Recorrente"],
+                    horizontal=True,
+                    key="tipo_contato_global",
+                )
+                if st.button("Montar fila de directs", key="btn_montar_fila"):
+                    fila = []
+                    for campos in campos_lote_extraidos:
+                        if campos.get("instagrams"):
+                            fila.append({
+                                "perfis": campos["instagrams"],
+                                "campos": campos,
+                                "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
+                            })
+                    if not fila:
+                        st.warning("Nenhum torneio com @perfil identificado.")
+                    else:
+                        st.session_state["fila_directs"] = fila
+                        st.session_state["fila_idx"] = 0
+                        st.rerun()
+
+            if st.session_state.get("fila_directs"):
+                fila = st.session_state["fila_directs"]
+                idx = st.session_state.get("fila_idx", 0)
+                total_fila = len(fila)
+
+                if idx < total_fila:
+                    item = fila[idx]
+                    perfis = item["perfis"]
+                    campos = item["campos"]
+
+                    torneio_nome = capitalizar_texto_inteligente(campos.get("torneio", "")) or f"Torneio {idx+1}"
+                    st.markdown(f"### {idx+1}/{total_fila} — {torneio_nome}")
+                    st.progress((idx + 1) / total_fila)
+
+                    # Tipo + navegação
+                    col_tipo, col_nav = st.columns([2, 1])
+                    with col_tipo:
+                        tipo_escolhido = st.radio(
+                            "Tipo de contato",
+                            options=["Novo contato", "Recorrente"],
+                            index=0 if item["tipo"] == "novo" else 1,
+                            horizontal=True,
+                            key=f"tipo_item_{idx}",
+                        )
+                        fila[idx]["tipo"] = "novo" if tipo_escolhido == "Novo contato" else "recorrente"
+
+                    with col_nav:
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if idx > 0:
+                                if st.button("← Ant.", key="btn_ant_direct"):
+                                    st.session_state["fila_idx"] = idx - 1
+                                    st.rerun()
+                        with c2:
+                            if idx < total_fila - 1:
+                                if st.button("Próximo →", key="btn_prox_direct", type="primary"):
+                                    st.session_state["fila_idx"] = idx + 1
+                                    st.rerun()
+                            else:
+                                st.success("Último!")
+
+                    # Perfis com link direto
+                    st.divider()
+                    st.markdown("**Abra o direct e verifique o histórico:**")
+                    for perfil in perfis:
+                        perfil_limpo = perfil.lstrip("@")
+                        url = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
+                        st.link_button(f"📩 Abrir direct — {perfil}", url)
+
+                    # Parágrafos separados
+                    st.divider()
+                    tipo_final = fila[idx]["tipo"]
+                    paragrafos = montar_paragrafos_direct(campos, tipo_final)
+                    st.markdown("**Copie e envie parágrafo por parágrafo:**")
+                    for i_p, paragrafo in enumerate(paragrafos, start=1):
+                        st.caption(f"Parágrafo {i_p}")
+                        st.code(paragrafo, language=None)
+
+                st.divider()
+                if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
+                    st.session_state["fila_directs"] = []
+                    st.session_state["fila_idx"] = 0
+                    st.rerun()
 
 # =========================================
 # TELA 3 — REGISTRO FINAL DO TORNEIO
@@ -2362,112 +2455,3 @@ with aba5:
 
                 st.error("Erro geral ao executar a limpeza.")
                 st.code(repr(e))
-
-
-
-# =========================================
-# TELA 6 — ENVIO DE DIRECTS
-# =========================================
-with aba6:
-    st.subheader("Tela 6 — Envio de Directs")
-
-    campos_extraidos = st.session_state.get("campos_lote_extraidos", [])
-
-    if not campos_extraidos:
-        st.info("Extraia os torneios na Tela 2 primeiro. Os dados ficarão disponíveis aqui automaticamente.")
-    else:
-        st.success(f"{len(campos_extraidos)} torneio(s) disponível(eis) para envio.")
-
-        tipo_global = st.radio(
-            "Tipo de contato padrão para esta sessão",
-            options=["Novo contato", "Recorrente"],
-            horizontal=True,
-            key="tipo_contato_global",
-        )
-
-        if st.button("Montar fila de directs", key="btn_montar_fila"):
-            fila = []
-            for campos in campos_extraidos:
-                if campos.get("instagrams"):
-                    fila.append({
-                        "perfis": campos["instagrams"],
-                        "campos": campos,
-                        "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
-                    })
-            if not fila:
-                st.warning("Nenhum torneio com @perfil do Instagram identificado.")
-            else:
-                st.session_state["fila_directs"] = fila
-                st.session_state["fila_idx"] = 0
-                st.success(f"Fila montada: {len(fila)} direct(s).")
-                st.rerun()
-
-    # Exibe a fila
-    if st.session_state.get("fila_directs"):
-        fila = st.session_state["fila_directs"]
-        idx = st.session_state.get("fila_idx", 0)
-        total = len(fila)
-
-        st.divider()
-
-        if idx < total:
-            item = fila[idx]
-            perfis = item["perfis"]
-            campos = item["campos"]
-
-            st.markdown(f"### Direct {idx + 1} de {total}")
-            st.progress((idx + 1) / total)
-            st.caption(f"Progresso: {idx + 1} de {total}")
-
-            # Tipo por torneio + navegação
-            col_tipo, col_nav = st.columns([2, 1])
-            with col_tipo:
-                tipo_escolhido = st.radio(
-                    "Tipo de contato",
-                    options=["Novo contato", "Recorrente"],
-                    index=0 if item["tipo"] == "novo" else 1,
-                    horizontal=True,
-                    key=f"tipo_item_{idx}",
-                )
-                fila[idx]["tipo"] = "novo" if tipo_escolhido == "Novo contato" else "recorrente"
-
-            with col_nav:
-                c1, c2 = st.columns(2)
-                with c1:
-                    if idx > 0:
-                        if st.button("← Ant.", key="btn_anterior"):
-                            st.session_state["fila_idx"] = idx - 1
-                            st.rerun()
-                with c2:
-                    if idx < total - 1:
-                        if st.button("Próximo →", key="btn_proximo", type="primary"):
-                            st.session_state["fila_idx"] = idx + 1
-                            st.rerun()
-                    else:
-                        st.success("Último!")
-
-            st.divider()
-
-            # Perfis com link de abertura do direct
-            st.markdown("**Perfis — clique para abrir o direct:**")
-            for perfil in perfis:
-                perfil_limpo = perfil.lstrip("@")
-                url = f"https://www.instagram.com/direct/new/?username={perfil_limpo}"
-                st.link_button(f"📩 {perfil}", url)
-
-            st.divider()
-
-            # Parágrafos separados
-            tipo_final = fila[idx]["tipo"]
-            paragrafos = montar_paragrafos_direct(campos, tipo_final)
-
-            st.markdown("**Mensagem — copie e envie parágrafo por parágrafo:**")
-            for i_p, paragrafo in enumerate(paragrafos, start=1):
-                st.caption(f"Parágrafo {i_p}")
-                st.code(paragrafo, language=None)
-
-        st.divider()
-        if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
-            st.session_state["fila_directs"] = []
-            st.session_state["fila_idx"] = 0
-            st.rerun()
