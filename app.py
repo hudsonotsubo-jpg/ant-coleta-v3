@@ -1661,10 +1661,12 @@ with aba2:
             st.error("Envie ao menos um print.")
         else:
             progress = st.progress(0)
+            status_extracao = st.empty()
             total = len(prints_lote)
             blocos_lote = []
 
             for i, img in enumerate(prints_lote, start=1):
+                status_extracao.caption(f"Extraindo torneio {i} de {total}...")
                 try:
                     resultado = extrair_texto_lote_1_torneio(img)
                     campos = extrair_campos_lote(resultado)
@@ -1687,28 +1689,45 @@ with aba2:
 
                 progress.progress(i / total)
 
-            st.divider()
-            st.subheader("Resultados do lote")
+            status_extracao.empty()
+            st.success(f"Extração concluída — {total} torneio(s) processado(s).")
 
-            consolidado = []
-            for idx, item in enumerate(blocos_lote, start=1):
-                with st.expander(f"Torneio {idx} — {item['arquivo']}", expanded=(idx == 1)):
-                    st.text_area(
-                        f"Bloco {idx}",
-                        value=item["mensagem"],
-                        height=340,
-                        key=f"bloco_lote_{idx}"
-                    )
-                consolidado.append(item["mensagem"])
+            consolidado = [item["mensagem"] for item in blocos_lote]
+            texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
 
             st.divider()
-            st.subheader("Todos os blocos")
+            st.subheader("Mensagens prontas para envio")
 
             st.text_area(
-                "Copie tudo se desejar",
-                value="\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado),
+                "Todos os torneios",
+                value=texto_consolidado,
                 height=600,
                 key="blocos_lote_consolidados"
+            )
+
+            texto_html = texto_consolidado.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+            st.components.v1.html(
+                f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:transparent;">
+<textarea id="txt2" style="position:absolute;left:-9999px;top:-9999px;">{texto_html}</textarea>
+<button id="btn2" onclick="
+    var t = document.getElementById('txt2');
+    if (navigator.clipboard && window.isSecureContext) {{
+        navigator.clipboard.writeText(t.value).then(function() {{
+            document.getElementById('btn2').textContent = '\u2705 Copiado!';
+            setTimeout(function(){{ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }}, 2000);
+        }});
+    }} else {{
+        t.select();
+        document.execCommand('copy');
+        document.getElementById('btn2').textContent = '\u2705 Copiado!';
+        setTimeout(function(){{ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }}, 2000);
+    }}
+" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">\ud83d\udccb Copiar todas as mensagens</button>
+</body>
+</html>""",
+                height=55,
             )
 
 # =========================================
