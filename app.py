@@ -26,6 +26,42 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
 # =========================================
+# HELPER — BOTÃO COPIAR
+# =========================================
+def botao_copiar(texto: str, label: str = "Copiar texto", key: str = "copiar"):
+    """
+    Renderiza um botão que copia o texto para a área de transferência.
+    Usa st.button nativo + st.session_state para evitar problemas de encoding.
+    """
+    if st.button(f"📋 {label}", key=f"btn_{key}"):
+        st.session_state[f"_copiado_{key}"] = True
+
+    if st.session_state.get(f"_copiado_{key}"):
+        st.toast("✅ Texto copiado!", icon="✅")
+        # Usa javascript via markdown para copiar
+        texto_escaped = texto.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+        st.markdown(
+            f"""<script>
+            (function() {{
+                var text = `{texto_escaped}`;
+                if (navigator.clipboard && window.isSecureContext) {{
+                    navigator.clipboard.writeText(text);
+                }} else {{
+                    var t = document.createElement('textarea');
+                    t.value = text;
+                    document.body.appendChild(t);
+                    t.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(t);
+                }}
+            }})();
+            </script>""",
+            unsafe_allow_html=True
+        )
+        st.session_state[f"_copiado_{key}"] = False
+
+
+# =========================================
 # HELPERS DE SECRETS
 # =========================================
 def obter_secret_obrigatorio(chave):
@@ -1612,35 +1648,7 @@ with aba1:
             )
 
 
-            # Botão copiar Tela 1 — texto passado via JSON para evitar UnicodeEncodeError
-            import json as _json_t1
-            texto_json_t1 = _json_t1.dumps(mensagem)
-            st.components.v1.html(
-                """<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:transparent;">
-<script>var _txt1 = """ + texto_json_t1 + """;</script>
-<button id="btn1" onclick="
-    if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(_txt1).then(function() {
-            document.getElementById('btn1').textContent = '\u2705 Copiado!';
-            setTimeout(function(){ document.getElementById('btn1').textContent = '\ud83d\udccb Copiar texto'; }, 2000);
-        });
-    } else {
-        var t = document.createElement('textarea');
-        t.value = _txt1;
-        document.body.appendChild(t);
-        t.select();
-        document.execCommand('copy');
-        document.body.removeChild(t);
-        document.getElementById('btn1').textContent = '\u2705 Copiado!';
-        setTimeout(function(){ document.getElementById('btn1').textContent = '\ud83d\udccb Copiar texto'; }, 2000);
-    }
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">\ud83d\udccb Copiar texto</button>
-</body>
-</html>""",
-                height=55,
-            )
+            botao_copiar(mensagem, label="Copiar texto", key="tela1")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1709,36 +1717,7 @@ with aba2:
                 key="blocos_lote_consolidados"
             )
 
-            # Botão copiar — texto passado via JSON para evitar UnicodeEncodeError
-            import json as _json_t2
-            texto_json = _json_t2.dumps(texto_consolidado)
-            st.components.v1.html(
-                """<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:transparent;">
-<script>var _txt2 = """ + texto_json + """;</script>
-<button id="btn2" onclick="
-    if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(_txt2).then(function() {
-            document.getElementById('btn2').textContent = '\u2705 Copiado!';
-            setTimeout(function(){ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }, 2000);
-        });
-    } else {
-        var t = document.createElement('textarea');
-        t.value = _txt2;
-        document.body.appendChild(t);
-        t.select();
-        document.execCommand('copy');
-        document.body.removeChild(t);
-        document.getElementById('btn2').textContent = '\u2705 Copiado!';
-        setTimeout(function(){ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }, 2000);
-    }
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">\ud83d\udccb Copiar todas as mensagens</button>
-</body>
-</html>""",
-                height=55,
-            )
-
+            botao_copiar(texto_consolidado, label="Copiar todas as mensagens", key="tela2")
 
 # =========================================
 # TELA 3 — REGISTRO FINAL DO TORNEIO
