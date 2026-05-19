@@ -1611,28 +1611,32 @@ with aba1:
                 key="mensagem_pronta"
             )
 
-            # Botão de copiar via JavaScript — usa textarea oculta para compatibilidade mobile
-            import json as _json
-            texto_js = _json.dumps(mensagem)
+
+            # Botão copiar Tela 1 — texto passado via JSON para evitar UnicodeEncodeError
+            import json as _json_t1
+            texto_json_t1 = _json_t1.dumps(mensagem)
             st.components.v1.html(
-                f"""<!DOCTYPE html>
+                """<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:transparent;">
-<textarea id="txt" style="position:absolute;left:-9999px;top:-9999px;">{mensagem.replace('<','&lt;').replace('>','&gt;')}</textarea>
-<button id="btn" onclick="
-    var t = document.getElementById('txt');
-    if (navigator.clipboard && window.isSecureContext) {{
-        navigator.clipboard.writeText(t.value).then(function() {{
-            document.getElementById('btn').textContent = '✅ Copiado!';
-            setTimeout(function(){{ document.getElementById('btn').textContent = '📋 Copiar texto'; }}, 2000);
-        }});
-    }} else {{
+<script>var _txt1 = """ + texto_json_t1 + """;</script>
+<button id="btn1" onclick="
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(_txt1).then(function() {
+            document.getElementById('btn1').textContent = '\u2705 Copiado!';
+            setTimeout(function(){ document.getElementById('btn1').textContent = '\ud83d\udccb Copiar texto'; }, 2000);
+        });
+    } else {
+        var t = document.createElement('textarea');
+        t.value = _txt1;
+        document.body.appendChild(t);
         t.select();
         document.execCommand('copy');
-        document.getElementById('btn').textContent = '✅ Copiado!';
-        setTimeout(function(){{ document.getElementById('btn').textContent = '📋 Copiar texto'; }}, 2000);
-    }}
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">📋 Copiar texto</button>
+        document.body.removeChild(t);
+        document.getElementById('btn1').textContent = '\u2705 Copiado!';
+        setTimeout(function(){ document.getElementById('btn1').textContent = '\ud83d\udccb Copiar texto'; }, 2000);
+    }
+" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">\ud83d\udccb Copiar texto</button>
 </body>
 </html>""",
                 height=55,
@@ -1705,30 +1709,36 @@ with aba2:
                 key="blocos_lote_consolidados"
             )
 
-            texto_html = texto_consolidado.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+            # Botão copiar — texto passado via JSON para evitar UnicodeEncodeError
+            import json as _json_t2
+            texto_json = _json_t2.dumps(texto_consolidado)
             st.components.v1.html(
-                f"""<!DOCTYPE html>
+                """<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:transparent;">
-<textarea id="txt2" style="position:absolute;left:-9999px;top:-9999px;">{texto_html}</textarea>
+<script>var _txt2 = """ + texto_json + """;</script>
 <button id="btn2" onclick="
-    var t = document.getElementById('txt2');
-    if (navigator.clipboard && window.isSecureContext) {{
-        navigator.clipboard.writeText(t.value).then(function() {{
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(_txt2).then(function() {
             document.getElementById('btn2').textContent = '\u2705 Copiado!';
-            setTimeout(function(){{ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }}, 2000);
-        }});
-    }} else {{
+            setTimeout(function(){ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }, 2000);
+        });
+    } else {
+        var t = document.createElement('textarea');
+        t.value = _txt2;
+        document.body.appendChild(t);
         t.select();
         document.execCommand('copy');
+        document.body.removeChild(t);
         document.getElementById('btn2').textContent = '\u2705 Copiado!';
-        setTimeout(function(){{ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }}, 2000);
-    }}
+        setTimeout(function(){ document.getElementById('btn2').textContent = '\ud83d\udccb Copiar todas as mensagens'; }, 2000);
+    }
 " style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">\ud83d\udccb Copiar todas as mensagens</button>
 </body>
 </html>""",
                 height=55,
             )
+
 
 # =========================================
 # TELA 3 — REGISTRO FINAL DO TORNEIO
