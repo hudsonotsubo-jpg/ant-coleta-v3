@@ -1611,6 +1611,35 @@ with aba1:
                 key="mensagem_pronta"
             )
 
+            # Botão de copiar com JavaScript
+            st.components.v1.html(
+                f"""
+                <button onclick="
+                    navigator.clipboard.writeText({repr(mensagem)}).then(function() {{
+                        this.textContent = '✅ Copiado!';
+                        this.style.backgroundColor = '#28a745';
+                        setTimeout(() => {{
+                            this.textContent = '📋 Copiar texto';
+                            this.style.backgroundColor = '#0d6efd';
+                        }}, 2000);
+                    }}.bind(this)).catch(function(err) {{
+                        alert('Erro ao copiar: ' + err);
+                    }});
+                " style="
+                    background-color: #0d6efd;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    font-size: 15px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    width: 100%;
+                    margin-top: 4px;
+                ">📋 Copiar texto</button>
+                """,
+                height=50,
+            )
+
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
 # =========================================
