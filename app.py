@@ -27,23 +27,23 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
     """
-    Botão azul de copiar. Usa innerText de elemento <pre> para evitar
-    re-encoding — o browser decodifica entidades HTML automaticamente.
+    Botão azul de copiar. Usa atributo data- para evitar interpretação
+    de links pelo browser. Funciona em mobile e desktop.
     """
+    import base64
+    # Encode em base64 para transporte seguro — sem risco de encoding
+    b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
     uid = key.replace(" ", "_").replace(".", "_")
-    # Escapa apenas o mínimo necessário para HTML válido
-    texto_html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html = f"""<div style="font-family:sans-serif;">
-<pre id="pre_{uid}" style="display:none;white-space:pre-wrap;">{texto_html}</pre>
-<button id="btn_{uid}" onclick="
-var el = document.getElementById('pre_{uid}');
-var txt = el.innerText;
+    html = f"""<button id="btn_{uid}" data-txt="{b64}" onclick="
+var b64 = this.getAttribute('data-txt');
+var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
+var txt = new TextDecoder('utf-8').decode(bytes);
 if (navigator.clipboard && window.isSecureContext) {{
     navigator.clipboard.writeText(txt).then(function() {{
-        document.getElementById('btn_{uid}').innerHTML = '&#x2705; Copiado!';
+        document.getElementById('btn_{uid}').textContent = 'Copiado!';
         document.getElementById('btn_{uid}').style.background = '#28a745';
         setTimeout(function() {{
-            document.getElementById('btn_{uid}').innerHTML = '&#x1F4CB; Copiar texto';
+            document.getElementById('btn_{uid}').textContent = 'Copiar texto';
             document.getElementById('btn_{uid}').style.background = '#0d6efd';
         }}, 2500);
     }});
@@ -51,21 +51,20 @@ if (navigator.clipboard && window.isSecureContext) {{
     var t = document.createElement('textarea');
     t.value = txt;
     t.style.position = 'fixed';
-    t.style.opacity = '0';
+    t.style.opacity = '0.01';
     document.body.appendChild(t);
     t.focus();
     t.select();
     document.execCommand('copy');
     document.body.removeChild(t);
-    document.getElementById('btn_{uid}').innerHTML = '&#x2705; Copiado!';
+    document.getElementById('btn_{uid}').textContent = 'Copiado!';
     document.getElementById('btn_{uid}').style.background = '#28a745';
     setTimeout(function() {{
-        document.getElementById('btn_{uid}').innerHTML = '&#x1F4CB; Copiar texto';
+        document.getElementById('btn_{uid}').textContent = 'Copiar texto';
         document.getElementById('btn_{uid}').style.background = '#0d6efd';
     }}, 2500);
 }}
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">&#x1F4CB; Copiar texto</button>
-</div>"""
+" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">Copiar texto</button>"""
     st.components.v1.html(html, height=55)
 
 
@@ -1921,6 +1920,11 @@ with aba3:
     )
     # Decodifica automaticamente caso o texto venha URL-encoded
     texto_confirmado = decodificar_texto(texto_confirmado_raw)
+
+    # Se o texto foi decodificado (era URL-encoded), atualiza o campo para mostrar o texto limpo
+    if texto_confirmado != texto_confirmado_raw and texto_confirmado_raw.strip():
+        st.session_state["texto_confirmado"] = texto_confirmado
+        st.caption("✅ Texto decodificado automaticamente.")
 
     st.divider()
 
