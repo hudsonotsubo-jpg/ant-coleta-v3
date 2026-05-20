@@ -1664,8 +1664,7 @@ with aba1:
             height=260,
             key="resultado_t1",
         )
-        st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
-        st.code(st.session_state.get("resultado_t1", ""), language=None)
+        st.caption("Selecione tudo (Ctrl+A) e copie (Ctrl+C) na caixa acima — o texto editado já está pronto para envio.")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1751,8 +1750,7 @@ with aba2:
                 height=400,
                 key="texto_consolidado_editado",
             )
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
-            st.code(st.session_state.get("texto_consolidado_editado", texto_consolidado), language=None)
+            st.caption("Selecione tudo (Ctrl+A) e copie (Ctrl+C) na caixa acima — o texto editado já está pronto para envio.")
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
