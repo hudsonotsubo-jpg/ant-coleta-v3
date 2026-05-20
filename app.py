@@ -25,6 +25,57 @@ from googleapiclient.http import MediaIoBaseUpload
 st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
+def botao_copiar_seguro(texto: str, key: str = "copiar"):
+    """
+    Botão de copiar que funciona em mobile e desktop sem encoding.
+    Usa base64 para passar o texto ao JavaScript de forma segura.
+    """
+    import base64
+    texto_b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
+    uid = key.replace(" ", "_")
+    html = f"""
+    <button id="btn_{uid}" onclick="
+        var b64 = '{texto_b64}';
+        var txt = decodeURIComponent(Array.prototype.map.call(atob(b64), function(c) {{
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }}).join(''));
+        if (navigator.clipboard && window.isSecureContext) {{
+            navigator.clipboard.writeText(txt).then(function() {{
+                document.getElementById('btn_{uid}').textContent = '✅ Copiado!';
+                setTimeout(function() {{
+                    document.getElementById('btn_{uid}').textContent = '📋 Copiar texto';
+                }}, 2500);
+            }});
+        }} else {{
+            var t = document.createElement('textarea');
+            t.value = txt;
+            t.style.position = 'fixed';
+            t.style.opacity = '0';
+            document.body.appendChild(t);
+            t.focus();
+            t.select();
+            document.execCommand('copy');
+            document.body.removeChild(t);
+            document.getElementById('btn_{uid}').textContent = '✅ Copiado!';
+            setTimeout(function() {{
+                document.getElementById('btn_{uid}').textContent = '📋 Copiar texto';
+            }}, 2500);
+        }}
+    " style="
+        background:#0d6efd;
+        color:white;
+        border:none;
+        padding:10px 20px;
+        font-size:15px;
+        border-radius:6px;
+        cursor:pointer;
+        width:100%;
+        margin-top:4px;
+    ">📋 Copiar texto</button>
+    """
+    st.components.v1.html(html, height=55)
+
+
 def decodificar_texto(texto: str) -> str:
     """Decodifica texto com encoding de URL (%20, %0A, etc.) para texto legível."""
     from urllib.parse import unquote
@@ -1668,8 +1719,7 @@ with aba1:
             height=260,
             key="resultado_t1_edit",
         )
-        st.caption("Toque/clique no ícone 📋 para copiar:")
-        st.code(st.session_state.get("resultado_t1_edit", ""), language=None)
+        botao_copiar_seguro(st.session_state.get("resultado_t1_edit", ""), key="t1")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1754,8 +1804,7 @@ with aba2:
                 height=400,
                 key="texto_consolidado_edit",
             )
-            st.caption("Toque/clique no ícone 📋 para copiar:")
-            st.code(st.session_state.get("texto_consolidado_edit", ""), language=None)
+            botao_copiar_seguro(st.session_state.get("texto_consolidado_edit", ""), key="t2")
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
