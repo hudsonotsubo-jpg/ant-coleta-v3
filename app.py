@@ -1531,7 +1531,8 @@ def extrair_texto_1_torneio(imagens: list, informacao_complementar: str = "") ->
         messages=[{"role": "user", "content": conteudo}],
     )
 
-    return response.content[0].text
+    from urllib.parse import unquote
+    return unquote(response.content[0].text)
 
 
 def extrair_texto_lote_1_torneio(imagem) -> str:
@@ -1560,7 +1561,8 @@ def extrair_texto_lote_1_torneio(imagem) -> str:
         messages=[{"role": "user", "content": conteudo}],
     )
 
-    return response.content[0].text
+    from urllib.parse import unquote
+    return unquote(response.content[0].text)
 
 
 def gerar_mensagem_organizadores_claude(
@@ -1638,7 +1640,8 @@ Instruções:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return response.content[0].text
+    from urllib.parse import unquote
+    return unquote(response.content[0].text)
 
 
 # =========================================
