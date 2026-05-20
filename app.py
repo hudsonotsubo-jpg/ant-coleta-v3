@@ -26,31 +26,45 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
-    """Botao de copiar — lê do session_state para garantir versão editada."""
-    # Usa o valor do session_state se existir (versão editada pelo usuário)
-    chave_edit = key + "_edit" if not key.endswith("_edit") else key
-    texto_final = st.session_state.get(chave_edit, texto)
+    """
+    Botão azul de copiar. Usa innerText de elemento <pre> para evitar
+    re-encoding — o browser decodifica entidades HTML automaticamente.
+    """
     uid = key.replace(" ", "_").replace(".", "_")
-    texto_escaped = (texto_final
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#39;")
-    )
-    html = f"""<div>
-<textarea id="area_{uid}" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;">{texto_escaped}</textarea>
+    # Escapa apenas o mínimo necessário para HTML válido
+    texto_html = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = f"""<div style="font-family:sans-serif;">
+<pre id="pre_{uid}" style="display:none;white-space:pre-wrap;">{texto_html}</pre>
 <button id="btn_{uid}" onclick="
-var el=document.getElementById('area_{uid}');
-el.style.position='fixed';el.style.left='0';el.style.top='0';
-el.style.width='2px';el.style.height='2px';el.style.opacity='0.01';
-document.body.appendChild(el);el.focus();el.setSelectionRange(0,el.value.length);
-document.execCommand('copy');
-if(navigator.clipboard&&window.isSecureContext){{navigator.clipboard.writeText(el.value);}}
-el.style.position='absolute';el.style.left='-9999px';
-document.getElementById('btn_{uid}').textContent='Copiado!';
-setTimeout(function(){{document.getElementById('btn_{uid}').textContent='Copiar texto';}},2500);
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">Copiar texto</button>
+var el = document.getElementById('pre_{uid}');
+var txt = el.innerText;
+if (navigator.clipboard && window.isSecureContext) {{
+    navigator.clipboard.writeText(txt).then(function() {{
+        document.getElementById('btn_{uid}').innerHTML = '&#x2705; Copiado!';
+        document.getElementById('btn_{uid}').style.background = '#28a745';
+        setTimeout(function() {{
+            document.getElementById('btn_{uid}').innerHTML = '&#x1F4CB; Copiar texto';
+            document.getElementById('btn_{uid}').style.background = '#0d6efd';
+        }}, 2500);
+    }});
+}} else {{
+    var t = document.createElement('textarea');
+    t.value = txt;
+    t.style.position = 'fixed';
+    t.style.opacity = '0';
+    document.body.appendChild(t);
+    t.focus();
+    t.select();
+    document.execCommand('copy');
+    document.body.removeChild(t);
+    document.getElementById('btn_{uid}').innerHTML = '&#x2705; Copiado!';
+    document.getElementById('btn_{uid}').style.background = '#28a745';
+    setTimeout(function() {{
+        document.getElementById('btn_{uid}').innerHTML = '&#x1F4CB; Copiar texto';
+        document.getElementById('btn_{uid}').style.background = '#0d6efd';
+    }}, 2500);
+}}
+" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">&#x1F4CB; Copiar texto</button>
 </div>"""
     st.components.v1.html(html, height=55)
 
@@ -1702,15 +1716,7 @@ with aba1:
             height=260,
             key="resultado_t1_edit",
         )
-        st.caption("Selecione o texto abaixo e copie:")
-        st.text_area(
-            "Texto para copiar",
-            value=st.session_state.get("resultado_t1_edit", ""),
-            height=260,
-            disabled=True,
-            key="resultado_t1_readonly",
-            label_visibility="collapsed",
-        )
+        botao_copiar_seguro(st.session_state.get("resultado_t1_edit", ""), key="resultado_t1_edit")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1795,15 +1801,7 @@ with aba2:
                 height=400,
                 key="texto_consolidado_edit",
             )
-            st.caption("Selecione o texto abaixo e copie:")
-            st.text_area(
-                "Texto para copiar",
-                value=st.session_state.get("texto_consolidado_edit", ""),
-                height=300,
-                disabled=True,
-                key="texto_consolidado_readonly",
-                label_visibility="collapsed",
-            )
+            botao_copiar_seguro(st.session_state.get("texto_consolidado_edit", ""), key="texto_consolidado_edit")
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
