@@ -25,6 +25,12 @@ from googleapiclient.http import MediaIoBaseUpload
 st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
+def decodificar_texto(texto: str) -> str:
+    """Decodifica texto com encoding de URL (%20, %0A, etc.) para texto legível."""
+    from urllib.parse import unquote
+    return unquote(texto)
+
+
 
 # =========================================
 # HELPERS DE SECRETS
@@ -1310,10 +1316,9 @@ def montar_paragrafos_direct(campos: dict, tipo: str) -> list:
 
     if not pendencias:
         return abertura + [
-            "Preciso apenas que confirmem as informações do evento.",
+            "Preciso apenas que me envie a arte de divulgação do evento para "
+            "podermos repostá-la na nossa página e confirme as informações abaixo:",
             bloco_info,
-            "Se estiver tudo ok, é só me enviar a arte de divulgação do evento "
-            "que incluiremos na ANT!",
         ]
     else:
         if len(pendencias) == 1:
@@ -1652,12 +1657,19 @@ with aba1:
                 )
 
             mensagem = montar_mensagem(resultado)
+            mensagem = decodificar_texto(mensagem)
 
             st.divider()
             st.subheader("Mensagem pronta")
 
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
-            st.code(mensagem, language=None)
+            mensagem_editada = st.text_area(
+                "Edite se necessário e copie",
+                value=mensagem,
+                height=260,
+                key="mensagem_editada_t1",
+            )
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar o texto final")
+            st.code(mensagem_editada, language=None)
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1692,7 +1704,7 @@ with aba2:
                 try:
                     resultado = extrair_texto_lote_1_torneio(img)
                     campos = extrair_campos_lote(resultado)
-                    mensagem_direct = montar_mensagem_direct_lote(campos)
+                    mensagem_direct = decodificar_texto(montar_mensagem_direct_lote(campos))
                     campos_lote_extraidos.append(campos)
                 except Exception as e:
                     campos = {
@@ -1734,8 +1746,14 @@ with aba2:
         with sub_aba_texto:
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
-            st.caption("Clique no ícone 📋 no canto superior direito para copiar")
-            st.code(texto_consolidado, language=None)
+            texto_editado = st.text_area(
+                "Edite se necessário",
+                value=texto_consolidado,
+                height=400,
+                key="texto_consolidado_editado",
+            )
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar o texto final")
+            st.code(texto_editado, language=None)
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
