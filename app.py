@@ -27,18 +27,29 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
     """
-    Botão azul de copiar. Usa atributo data- para evitar interpretação
-    de links pelo browser. Funciona em mobile e desktop.
+    Botão azul de copiar. Força clipboard como text/plain puro.
     """
     import base64
-    # Encode em base64 para transporte seguro — sem risco de encoding
     b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
     uid = key.replace(" ", "_").replace(".", "_")
     html = f"""<button id="btn_{uid}" data-txt="{b64}" onclick="
 var b64 = this.getAttribute('data-txt');
 var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
 var txt = new TextDecoder('utf-8').decode(bytes);
-if (navigator.clipboard && window.isSecureContext) {{
+if (navigator.clipboard && window.isSecureContext && navigator.clipboard.write) {{
+    var blob = new Blob([txt], {{type: 'text/plain'}});
+    var item = new ClipboardItem({{'text/plain': blob}});
+    navigator.clipboard.write([item]).then(function() {{
+        document.getElementById('btn_{uid}').textContent = 'Copiado!';
+        document.getElementById('btn_{uid}').style.background = '#28a745';
+        setTimeout(function() {{
+            document.getElementById('btn_{uid}').textContent = 'Copiar texto';
+            document.getElementById('btn_{uid}').style.background = '#0d6efd';
+        }}, 2500);
+    }}).catch(function() {{
+        navigator.clipboard.writeText(txt);
+    }});
+}} else if (navigator.clipboard) {{
     navigator.clipboard.writeText(txt).then(function() {{
         document.getElementById('btn_{uid}').textContent = 'Copiado!';
         document.getElementById('btn_{uid}').style.background = '#28a745';
