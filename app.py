@@ -1657,14 +1657,17 @@ with aba1:
 
     # Exibe resultado sempre que existir no session_state
     if st.session_state.get("resultado_t1"):
+        # Inicializa chave de edição separada da chave de armazenamento
+        if "resultado_t1_edit" not in st.session_state or st.session_state.get("_resultado_t1_base") != st.session_state["resultado_t1"]:
+            st.session_state["resultado_t1_edit"] = st.session_state["resultado_t1"]
+            st.session_state["_resultado_t1_base"] = st.session_state["resultado_t1"]
         st.divider()
         st.subheader("Mensagem pronta")
         st.text_area(
-            "Edite se necessário",
+            "Edite se necessário — depois selecione tudo (Ctrl+A) e copie (Ctrl+C)",
             height=260,
-            key="resultado_t1",
+            key="resultado_t1_edit",
         )
-        st.caption("Selecione tudo (Ctrl+A) e copie (Ctrl+C) na caixa acima — o texto editado já está pronto para envio.")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1728,7 +1731,6 @@ with aba2:
             st.session_state["blocos_lote"] = blocos_lote
             status_extracao.empty()
             st.success(f"Extração concluída — {total} torneio(s) processado(s).")
-            st.rerun()
 
     # Exibe resultados se já extraídos
     if st.session_state.get("campos_lote_extraidos"):
@@ -1741,16 +1743,15 @@ with aba2:
         with sub_aba_texto:
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
-            if "texto_consolidado_editado" not in st.session_state or st.session_state.get("_ultimo_consolidado") != texto_consolidado:
-                st.session_state["texto_consolidado_editado"] = texto_consolidado
+            if "texto_consolidado_edit" not in st.session_state or st.session_state.get("_ultimo_consolidado") != texto_consolidado:
+                st.session_state["texto_consolidado_edit"] = texto_consolidado
                 st.session_state["_ultimo_consolidado"] = texto_consolidado
 
             st.text_area(
-                "Edite se necessário",
+                "Edite se necessário — depois selecione tudo (Ctrl+A) e copie (Ctrl+C)",
                 height=400,
-                key="texto_consolidado_editado",
+                key="texto_consolidado_edit",
             )
-            st.caption("Selecione tudo (Ctrl+A) e copie (Ctrl+C) na caixa acima — o texto editado já está pronto para envio.")
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
