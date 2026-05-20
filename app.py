@@ -1662,14 +1662,17 @@ with aba1:
             st.divider()
             st.subheader("Mensagem pronta")
 
-            mensagem_editada = st.text_area(
-                "Edite se necessário e copie",
-                value=mensagem,
+            if "mensagem_editada_t1" not in st.session_state or st.session_state.get("_ultima_extracao_t1") != mensagem:
+                st.session_state["mensagem_editada_t1"] = mensagem
+                st.session_state["_ultima_extracao_t1"] = mensagem
+
+            st.text_area(
+                "Edite se necessário",
                 height=260,
                 key="mensagem_editada_t1",
             )
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar o texto final")
-            st.code(mensagem_editada, language=None)
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+            st.code(st.session_state.get("mensagem_editada_t1", mensagem), language=None)
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1746,14 +1749,17 @@ with aba2:
         with sub_aba_texto:
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
-            texto_editado = st.text_area(
+            if "texto_consolidado_editado" not in st.session_state or st.session_state.get("_ultimo_consolidado") != texto_consolidado:
+                st.session_state["texto_consolidado_editado"] = texto_consolidado
+                st.session_state["_ultimo_consolidado"] = texto_consolidado
+
+            st.text_area(
                 "Edite se necessário",
-                value=texto_consolidado,
                 height=400,
                 key="texto_consolidado_editado",
             )
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar o texto final")
-            st.code(texto_editado, language=None)
+            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+            st.code(st.session_state.get("texto_consolidado_editado", texto_consolidado), language=None)
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
