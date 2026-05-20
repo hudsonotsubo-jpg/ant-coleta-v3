@@ -1664,10 +1664,12 @@ with aba1:
         st.divider()
         st.subheader("Mensagem pronta")
         st.text_area(
-            "Edite se necessário — depois selecione tudo (Ctrl+A) e copie (Ctrl+C)",
+            "Edite se necessário",
             height=260,
             key="resultado_t1_edit",
         )
+        st.caption("Toque/clique no ícone 📋 para copiar:")
+        st.code(st.session_state.get("resultado_t1_edit", ""), language=None)
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1748,10 +1750,12 @@ with aba2:
                 st.session_state["_ultimo_consolidado"] = texto_consolidado
 
             st.text_area(
-                "Edite se necessário — depois selecione tudo (Ctrl+A) e copie (Ctrl+C)",
+                "Edite se necessário",
                 height=400,
                 key="texto_consolidado_edit",
             )
+            st.caption("Toque/clique no ícone 📋 para copiar:")
+            st.code(st.session_state.get("texto_consolidado_edit", ""), language=None)
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
