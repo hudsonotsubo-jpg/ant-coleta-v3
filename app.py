@@ -1702,7 +1702,9 @@ with aba1:
             height=260,
             key="resultado_t1_edit",
         )
-        botao_copiar_seguro(st.session_state.get("resultado_t1_edit", ""), key="resultado_t1")
+        _debug_txt = st.session_state.get("resultado_t1_edit", "")
+        st.caption(f"DEBUG — primeiros 100 chars no session_state: `{repr(_debug_txt[:100])}`")
+        botao_copiar_seguro(_debug_txt, key="resultado_t1")
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
