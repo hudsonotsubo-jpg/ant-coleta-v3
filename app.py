@@ -1907,11 +1907,13 @@ with aba3:
 
     st.markdown("### 1. Texto confirmado")
 
-    texto_confirmado = st.text_area(
+    texto_confirmado_raw = st.text_area(
         "Cole aqui o texto confirmado pelo organizador",
         height=220,
         key="texto_confirmado"
     )
+    # Decodifica automaticamente caso o texto venha URL-encoded
+    texto_confirmado = decodificar_texto(texto_confirmado_raw)
 
     st.divider()
 
