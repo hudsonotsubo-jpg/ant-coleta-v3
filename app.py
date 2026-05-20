@@ -26,53 +26,40 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
-    """
-    Botão de copiar que funciona em mobile e desktop sem encoding.
-    Usa base64 para passar o texto ao JavaScript de forma segura.
-    """
-    import base64
-    texto_b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
-    uid = key.replace(" ", "_")
-    html = f"""
-    <button id="btn_{uid}" onclick="
-        var b64 = '{texto_b64}';
-        var txt = decodeURIComponent(Array.prototype.map.call(atob(b64), function(c) {{
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }}).join(''));
-        if (navigator.clipboard && window.isSecureContext) {{
-            navigator.clipboard.writeText(txt).then(function() {{
-                document.getElementById('btn_{uid}').textContent = '✅ Copiado!';
-                setTimeout(function() {{
-                    document.getElementById('btn_{uid}').textContent = '📋 Copiar texto';
-                }}, 2500);
-            }});
-        }} else {{
-            var t = document.createElement('textarea');
-            t.value = txt;
-            t.style.position = 'fixed';
-            t.style.opacity = '0';
-            document.body.appendChild(t);
-            t.focus();
-            t.select();
-            document.execCommand('copy');
-            document.body.removeChild(t);
-            document.getElementById('btn_{uid}').textContent = '✅ Copiado!';
-            setTimeout(function() {{
-                document.getElementById('btn_{uid}').textContent = '📋 Copiar texto';
-            }}, 2500);
-        }}
-    " style="
-        background:#0d6efd;
-        color:white;
-        border:none;
-        padding:10px 20px;
-        font-size:15px;
-        border-radius:6px;
-        cursor:pointer;
-        width:100%;
-        margin-top:4px;
-    ">📋 Copiar texto</button>
-    """
+    """Botao de copiar via textarea oculta — funciona em mobile e desktop."""
+    import json
+    uid = key.replace(" ", "_").replace(".", "_")
+    # Escapa o texto para uso seguro em atributo HTML
+    texto_escaped = (texto
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+    html = f"""<div>
+<textarea id="area_{uid}" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;">{texto_escaped}</textarea>
+<button id="btn_{uid}" onclick="
+var el=document.getElementById('area_{uid}');
+el.style.position='fixed';
+el.style.left='0';
+el.style.top='0';
+el.style.width='100%';
+el.style.opacity='0';
+document.body.appendChild(el);
+el.focus();
+el.setSelectionRange(0,el.value.length);
+var ok=document.execCommand('copy');
+el.style.position='absolute';
+el.style.left='-9999px';
+if(ok||navigator.clipboard){{
+  if(navigator.clipboard&&window.isSecureContext){{
+    navigator.clipboard.writeText(el.value);
+  }}
+  document.getElementById('btn_{uid}').textContent='Copiado!';
+  setTimeout(function(){{document.getElementById('btn_{uid}').textContent='Copiar texto';}},2500);
+}}" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;">Copiar texto</button>
+</div>"""
     st.components.v1.html(html, height=55)
 
 
