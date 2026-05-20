@@ -1702,9 +1702,15 @@ with aba1:
             height=260,
             key="resultado_t1_edit",
         )
-        _debug_txt = st.session_state.get("resultado_t1_edit", "")
-        st.caption(f"DEBUG — primeiros 100 chars no session_state: `{repr(_debug_txt[:100])}`")
-        botao_copiar_seguro(_debug_txt, key="resultado_t1")
+        st.caption("Selecione o texto abaixo e copie:")
+        st.text_area(
+            "Texto para copiar",
+            value=st.session_state.get("resultado_t1_edit", ""),
+            height=260,
+            disabled=True,
+            key="resultado_t1_readonly",
+            label_visibility="collapsed",
+        )
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
@@ -1789,7 +1795,15 @@ with aba2:
                 height=400,
                 key="texto_consolidado_edit",
             )
-            botao_copiar_seguro(st.session_state.get("texto_consolidado_edit", ""), key="texto_consolidado")
+            st.caption("Selecione o texto abaixo e copie:")
+            st.text_area(
+                "Texto para copiar",
+                value=st.session_state.get("texto_consolidado_edit", ""),
+                height=300,
+                disabled=True,
+                key="texto_consolidado_readonly",
+                label_visibility="collapsed",
+            )
 
         # ── Sub-aba 2: envio de directs ────────────────────────────
         with sub_aba_directs:
