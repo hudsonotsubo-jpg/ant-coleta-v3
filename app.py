@@ -1646,33 +1646,26 @@ with aba1:
         if print_principal is None:
             st.error("Envie o print principal.")
         else:
-            imagem = Image.open(print_principal)
-            st.image(imagem, use_container_width=True)
-
             with st.spinner("Analisando com Claude..."):
                 imagens = [print_principal] + (prints_adicionais if prints_adicionais else [])
                 resultado = extrair_texto_1_torneio(
                     imagens=imagens,
                     informacao_complementar=informacao_complementar
                 )
+            mensagem = decodificar_texto(montar_mensagem(resultado))
+            st.session_state["resultado_t1"] = mensagem
 
-            mensagem = montar_mensagem(resultado)
-            mensagem = decodificar_texto(mensagem)
-
-            st.divider()
-            st.subheader("Mensagem pronta")
-
-            if "mensagem_editada_t1" not in st.session_state or st.session_state.get("_ultima_extracao_t1") != mensagem:
-                st.session_state["mensagem_editada_t1"] = mensagem
-                st.session_state["_ultima_extracao_t1"] = mensagem
-
-            st.text_area(
-                "Edite se necessário",
-                height=260,
-                key="mensagem_editada_t1",
-            )
-            st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
-            st.code(st.session_state.get("mensagem_editada_t1", mensagem), language=None)
+    # Exibe resultado sempre que existir no session_state
+    if st.session_state.get("resultado_t1"):
+        st.divider()
+        st.subheader("Mensagem pronta")
+        st.text_area(
+            "Edite se necessário",
+            height=260,
+            key="resultado_t1",
+        )
+        st.caption("Clique no ícone 📋 no canto superior direito do bloco abaixo para copiar")
+        st.code(st.session_state.get("resultado_t1", ""), language=None)
 
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
