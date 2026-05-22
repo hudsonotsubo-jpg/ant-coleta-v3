@@ -27,55 +27,73 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
     """
-    Botão azul de copiar. Força clipboard como text/plain puro.
+    Botão de copiar implementado via st.markdown (documento principal),
+    evitando o bloqueio de clipboard-write do iframe cross-origin do
+    st.components.v1.html.
+    Usa postMessage para passar o texto do iframe pai para o documento
+    principal onde a permissão clipboard-write está disponível.
     """
-    import base64
-    b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
-    uid = key.replace(" ", "_").replace(".", "_")
-    html = f"""<button id="btn_{uid}" data-txt="{b64}" onclick="
-var b64 = this.getAttribute('data-txt');
-var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
-var txt = new TextDecoder('utf-8').decode(bytes);
-if (navigator.clipboard && window.isSecureContext && navigator.clipboard.write) {{
-    var blob = new Blob([txt], {{type: 'text/plain'}});
-    var item = new ClipboardItem({{'text/plain': blob}});
-    navigator.clipboard.write([item]).then(function() {{
-        document.getElementById('btn_{uid}').textContent = 'Copiado!';
-        document.getElementById('btn_{uid}').style.background = '#28a745';
-        setTimeout(function() {{
-            document.getElementById('btn_{uid}').textContent = 'Copiar texto';
-            document.getElementById('btn_{uid}').style.background = '#0d6efd';
-        }}, 2500);
-    }}).catch(function() {{
-        navigator.clipboard.writeText(txt);
+    import base64 as _b64
+    b64 = _b64.b64encode(texto.encode("utf-8")).decode("ascii")
+    uid = key.replace(" ", "_").replace(".", "_").replace("-", "_")
+
+    # Injeta o listener uma única vez por sessão via session_state
+    listener_key = f"_clipboard_listener_{uid}"
+    if listener_key not in st.session_state:
+        st.session_state[listener_key] = True
+        listener_js = f"""
+<script>
+(function() {{
+    var listenerKey = 'ant_clipboard_listener_{uid}';
+    if (window[listenerKey]) return;
+    window[listenerKey] = true;
+    window.addEventListener('message', function(e) {{
+        if (!e.data || e.data.type !== 'ANT_COPY_{uid}') return;
+        var txt = e.data.text;
+        if (navigator.clipboard && window.isSecureContext) {{
+            navigator.clipboard.writeText(txt).catch(function() {{
+                fallbackCopy_{uid}(txt);
+            }});
+        }} else {{
+            fallbackCopy_{uid}(txt);
+        }}
     }});
-}} else if (navigator.clipboard) {{
-    navigator.clipboard.writeText(txt).then(function() {{
-        document.getElementById('btn_{uid}').textContent = 'Copiado!';
-        document.getElementById('btn_{uid}').style.background = '#28a745';
-        setTimeout(function() {{
-            document.getElementById('btn_{uid}').textContent = 'Copiar texto';
-            document.getElementById('btn_{uid}').style.background = '#0d6efd';
-        }}, 2500);
-    }});
-}} else {{
-    var t = document.createElement('textarea');
-    t.value = txt;
-    t.style.position = 'fixed';
-    t.style.opacity = '0.01';
-    document.body.appendChild(t);
-    t.focus();
-    t.select();
-    document.execCommand('copy');
-    document.body.removeChild(t);
-    document.getElementById('btn_{uid}').textContent = 'Copiado!';
-    document.getElementById('btn_{uid}').style.background = '#28a745';
+    function fallbackCopy_{uid}(txt) {{
+        var t = document.createElement('textarea');
+        t.value = txt;
+        t.style.position = 'fixed';
+        t.style.opacity = '0.01';
+        document.body.appendChild(t);
+        t.focus(); t.select();
+        try {{ document.execCommand('copy'); }} catch(e) {{}}
+        document.body.removeChild(t);
+    }}
+}})();
+</script>
+"""
+        st.markdown(listener_js, unsafe_allow_html=True)
+
+    # Botão dentro de componente que envia postMessage ao pai
+    html = f"""
+<button id="btn_{uid}"
+  onclick="
+    var b64 = '{b64}';
+    var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
+    var txt = new TextDecoder('utf-8').decode(bytes);
+    window.parent.postMessage({{type: 'ANT_COPY_{uid}', text: txt}}, '*');
+    this.textContent = 'Copiado!';
+    this.style.background = '#28a745';
+    var self = this;
     setTimeout(function() {{
-        document.getElementById('btn_{uid}').textContent = 'Copiar texto';
-        document.getElementById('btn_{uid}').style.background = '#0d6efd';
+      self.textContent = 'Copiar texto';
+      self.style.background = '#0d6efd';
     }}, 2500);
-}}
-" style="background:#0d6efd;color:white;border:none;padding:10px 20px;font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">Copiar texto</button>"""
+  "
+  style="background:#0d6efd;color:white;border:none;padding:10px 20px;
+         font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">
+  Copiar texto
+</button>
+"""
     st.components.v1.html(html, height=55)
 
 
@@ -780,10 +798,24 @@ def normalizar_imagem_para_api(uploaded_file):
     Normaliza qualquer imagem para JPEG RGB antes de enviar à API Anthropic.
     Resolve problemas com fotos de celular (HEIC, HEIF, PNG com transparência,
     imagens com perfil de cor incompatível, metadados excessivos, etc).
+    Aceita: JPEG, PNG, WebP, BMP, HEIC, HEIF e outros formatos suportados pelo Pillow.
     Retorna (bytes_jpeg, "image/jpeg").
     """
     try:
         bytes_originais = uploaded_file.getvalue()
+
+        # Tenta suporte a HEIC/HEIF via pillow-heif (instalado opcionalmente)
+        nome = getattr(uploaded_file, "name", "") or ""
+        ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
+        mime = getattr(uploaded_file, "type", "") or ""
+        is_heic = ext in ("heic", "heif") or "heic" in mime or "heif" in mime
+        if is_heic:
+            try:
+                import pillow_heif
+                pillow_heif.register_heif_opener()
+            except ImportError:
+                pass  # tenta abrir com Pillow mesmo assim
+
         img = Image.open(io.BytesIO(bytes_originais))
 
         if img.mode in ("RGBA", "LA", "P"):
@@ -804,11 +836,14 @@ def normalizar_imagem_para_api(uploaded_file):
         bytes_originais = uploaded_file.getvalue()
         mime = uploaded_file.type or "image/jpeg"
         mapa = {
-            "image/jpeg": "image/jpeg",
-            "image/jpg": "image/jpeg",
-            "image/png": "image/png",
-            "image/gif": "image/gif",
-            "image/webp": "image/webp",
+            "image/jpeg":  "image/jpeg",
+            "image/jpg":   "image/jpeg",
+            "image/png":   "image/png",
+            "image/gif":   "image/gif",
+            "image/webp":  "image/webp",
+            "image/bmp":   "image/jpeg",
+            "image/heic":  "image/jpeg",
+            "image/heif":  "image/jpeg",
         }
         return bytes_originais, mapa.get(mime, "image/jpeg")
 
@@ -1679,13 +1714,13 @@ with aba1:
 
     print_principal = st.file_uploader(
         "Upload do PRINT principal",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
         key="print_principal"
     )
 
     prints_adicionais = st.file_uploader(
         "Uploads adicionais do mesmo torneio (opcional)",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
         accept_multiple_files=True,
         key="prints_adicionais"
     )
@@ -1739,7 +1774,7 @@ with aba2:
 
     prints_lote = st.file_uploader(
         "Uploads dos PRINTS dos torneios",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
         accept_multiple_files=True,
         key="prints_lote"
     )
@@ -1924,18 +1959,23 @@ with aba3:
 
     st.markdown("### 1. Texto confirmado")
 
-    texto_confirmado_raw = st.text_area(
+    # Inicializa chave no session_state se necessário
+    if "texto_confirmado" not in st.session_state:
+        st.session_state["texto_confirmado"] = ""
+
+    def _decodificar_confirmado():
+        raw = st.session_state.get("texto_confirmado", "")
+        decoded = decodificar_texto(raw)
+        if decoded != raw:
+            st.session_state["texto_confirmado"] = decoded
+
+    st.text_area(
         "Cole aqui o texto confirmado pelo organizador",
         height=220,
-        key="texto_confirmado"
+        key="texto_confirmado",
+        on_change=_decodificar_confirmado,
     )
-    # Decodifica automaticamente caso o texto venha URL-encoded
-    texto_confirmado = decodificar_texto(texto_confirmado_raw)
-
-    # Se o texto foi decodificado (era URL-encoded), atualiza o campo para mostrar o texto limpo
-    if texto_confirmado != texto_confirmado_raw and texto_confirmado_raw.strip():
-        st.session_state["texto_confirmado"] = texto_confirmado
-        st.caption("✅ Texto decodificado automaticamente.")
+    texto_confirmado = st.session_state.get("texto_confirmado", "")
 
     st.divider()
 
@@ -1943,7 +1983,7 @@ with aba3:
 
     flyer_final = st.file_uploader(
         "Upload do FLYER final",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
         key="flyer_final"
     )
 
@@ -1951,7 +1991,7 @@ with aba3:
 
     print_post = st.file_uploader(
         "Upload do PRINT do post",
-        type=["jpg", "jpeg", "png"],
+        type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
         key="print_post"
     )
 
