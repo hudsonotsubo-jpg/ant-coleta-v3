@@ -27,72 +27,85 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
     """
-    Botão de copiar implementado via st.markdown (documento principal),
-    evitando o bloqueio de clipboard-write do iframe cross-origin do
-    st.components.v1.html.
-    Usa postMessage para passar o texto do iframe pai para o documento
-    principal onde a permissão clipboard-write está disponível.
+    Botão de copiar que funciona dentro do iframe do Streamlit.
+    Usa textarea + execCommand('copy') como método principal —
+    funciona sem permissão clipboard-write.
+    navigator.clipboard.writeText é usado como fallback moderno.
     """
     import base64 as _b64
     b64 = _b64.b64encode(texto.encode("utf-8")).decode("ascii")
     uid = key.replace(" ", "_").replace(".", "_").replace("-", "_")
 
-    # Injeta o listener uma única vez por sessão via session_state
-    listener_key = f"_clipboard_listener_{uid}"
-    if listener_key not in st.session_state:
-        st.session_state[listener_key] = True
-        listener_js = f"""
-<script>
-(function() {{
-    var listenerKey = 'ant_clipboard_listener_{uid}';
-    if (window[listenerKey]) return;
-    window[listenerKey] = true;
-    window.addEventListener('message', function(e) {{
-        if (!e.data || e.data.type !== 'ANT_COPY_{uid}') return;
-        var txt = e.data.text;
-        if (navigator.clipboard && window.isSecureContext) {{
-            navigator.clipboard.writeText(txt).catch(function() {{
-                fallbackCopy_{uid}(txt);
-            }});
-        }} else {{
-            fallbackCopy_{uid}(txt);
-        }}
-    }});
-    function fallbackCopy_{uid}(txt) {{
-        var t = document.createElement('textarea');
-        t.value = txt;
-        t.style.position = 'fixed';
-        t.style.opacity = '0.01';
-        document.body.appendChild(t);
-        t.focus(); t.select();
-        try {{ document.execCommand('copy'); }} catch(e) {{}}
-        document.body.removeChild(t);
-    }}
-}})();
-</script>
-"""
-        st.markdown(listener_js, unsafe_allow_html=True)
-
-    # Botão dentro de componente que envia postMessage ao pai
     html = f"""
-<button id="btn_{uid}"
-  onclick="
-    var b64 = '{b64}';
-    var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
-    var txt = new TextDecoder('utf-8').decode(bytes);
-    window.parent.postMessage({{type: 'ANT_COPY_{uid}', text: txt}}, '*');
-    this.textContent = 'Copiado!';
-    this.style.background = '#28a745';
-    var self = this;
+<style>
+  #btn_{uid} {{
+    background: #0d6efd;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    font-size: 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 4px;
+    font-family: sans-serif;
+  }}
+  #btn_{uid}:active {{ opacity: 0.85; }}
+</style>
+<button id="btn_{uid}" onclick="copiarTexto_{uid}()">Copiar texto</button>
+<script>
+function copiarTexto_{uid}() {{
+  var b64 = '{b64}';
+  var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
+  var txt = new TextDecoder('utf-8').decode(bytes);
+  var btn = document.getElementById('btn_{uid}');
+
+  function marcarCopiado() {{
+    btn.textContent = 'Copiado!';
+    btn.style.background = '#28a745';
     setTimeout(function() {{
-      self.textContent = 'Copiar texto';
-      self.style.background = '#0d6efd';
+      btn.textContent = 'Copiar texto';
+      btn.style.background = '#0d6efd';
     }}, 2500);
-  "
-  style="background:#0d6efd;color:white;border:none;padding:10px 20px;
-         font-size:15px;border-radius:6px;cursor:pointer;width:100%;margin-top:4px;">
-  Copiar texto
-</button>
+  }}
+
+  // Método 1: textarea + execCommand (funciona em iframes sem permissão especial)
+  try {{
+    var t = document.createElement('textarea');
+    t.value = txt;
+    t.style.position = 'fixed';
+    t.style.left = '-9999px';
+    t.style.top = '-9999px';
+    t.setAttribute('readonly', '');
+    document.body.appendChild(t);
+    t.focus();
+    t.select();
+    t.setSelectionRange(0, t.value.length);
+    var ok = document.execCommand('copy');
+    document.body.removeChild(t);
+    if (ok) {{ marcarCopiado(); return; }}
+  }} catch(e) {{}}
+
+  // Método 2: navigator.clipboard (contexto seguro)
+  if (navigator.clipboard && window.isSecureContext) {{
+    navigator.clipboard.writeText(txt).then(marcarCopiado).catch(function() {{
+      btn.textContent = 'Erro ao copiar';
+      btn.style.background = '#dc3545';
+      setTimeout(function() {{
+        btn.textContent = 'Copiar texto';
+        btn.style.background = '#0d6efd';
+      }}, 2500);
+    }});
+  }} else {{
+    btn.textContent = 'Erro ao copiar';
+    btn.style.background = '#dc3545';
+    setTimeout(function() {{
+      btn.textContent = 'Copiar texto';
+      btn.style.background = '#0d6efd';
+    }}, 2500);
+  }}
+}}
+</script>
 """
     st.components.v1.html(html, height=55)
 
