@@ -27,10 +27,15 @@ st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
     """
-    Botão de copiar que funciona dentro do iframe do Streamlit.
-    Usa textarea + execCommand('copy') como método principal —
-    funciona sem permissão clipboard-write.
-    navigator.clipboard.writeText é usado como fallback moderno.
+    Botão de copiar que lê o valor atual da textarea editável pelo usuário
+    diretamente do DOM do documento pai (via postMessage), garantindo que
+    edições feitas antes de clicar sejam incluídas na cópia.
+
+    Fluxo:
+    1. O iframe envia postMessage ao pai pedindo o valor da textarea com data-key=key
+    2. O pai responde com o valor atual do DOM
+    3. O iframe copia o texto recebido para o clipboard
+    Se a textarea não for encontrada no pai, usa o texto original como fallback.
     """
     import base64 as _b64
     b64 = _b64.b64encode(texto.encode("utf-8")).decode("ascii")
@@ -55,58 +60,140 @@ def botao_copiar_seguro(texto: str, key: str = "copiar"):
 <button id="btn_{uid}" onclick="copiarTexto_{uid}()">Copiar texto</button>
 <script>
 function copiarTexto_{uid}() {{
-  var b64 = '{b64}';
-  var bytes = Uint8Array.from(atob(b64), function(c) {{ return c.charCodeAt(0); }});
-  var txt = new TextDecoder('utf-8').decode(bytes);
   var btn = document.getElementById('btn_{uid}');
+  btn.textContent = 'Copiando...';
+  btn.disabled = true;
+
+  function executarCopia(txt) {{
+    // Método 1: textarea + execCommand (sem permissão especial)
+    try {{
+      var t = document.createElement('textarea');
+      t.value = txt;
+      t.style.position = 'fixed';
+      t.style.left = '-9999px';
+      t.style.top = '-9999px';
+      t.setAttribute('readonly', '');
+      document.body.appendChild(t);
+      t.focus();
+      t.select();
+      t.setSelectionRange(0, t.value.length);
+      var ok = document.execCommand('copy');
+      document.body.removeChild(t);
+      if (ok) {{ marcarCopiado(); return; }}
+    }} catch(e) {{}}
+
+    // Método 2: navigator.clipboard
+    if (navigator.clipboard && window.isSecureContext) {{
+      navigator.clipboard.writeText(txt).then(marcarCopiado).catch(marcarErro);
+    }} else {{
+      marcarErro();
+    }}
+  }}
 
   function marcarCopiado() {{
     btn.textContent = 'Copiado!';
     btn.style.background = '#28a745';
+    btn.disabled = false;
     setTimeout(function() {{
       btn.textContent = 'Copiar texto';
       btn.style.background = '#0d6efd';
     }}, 2500);
   }}
 
-  // Método 1: textarea + execCommand (funciona em iframes sem permissão especial)
-  try {{
-    var t = document.createElement('textarea');
-    t.value = txt;
-    t.style.position = 'fixed';
-    t.style.left = '-9999px';
-    t.style.top = '-9999px';
-    t.setAttribute('readonly', '');
-    document.body.appendChild(t);
-    t.focus();
-    t.select();
-    t.setSelectionRange(0, t.value.length);
-    var ok = document.execCommand('copy');
-    document.body.removeChild(t);
-    if (ok) {{ marcarCopiado(); return; }}
-  }} catch(e) {{}}
-
-  // Método 2: navigator.clipboard (contexto seguro)
-  if (navigator.clipboard && window.isSecureContext) {{
-    navigator.clipboard.writeText(txt).then(marcarCopiado).catch(function() {{
-      btn.textContent = 'Erro ao copiar';
-      btn.style.background = '#dc3545';
-      setTimeout(function() {{
-        btn.textContent = 'Copiar texto';
-        btn.style.background = '#0d6efd';
-      }}, 2500);
-    }});
-  }} else {{
+  function marcarErro() {{
     btn.textContent = 'Erro ao copiar';
     btn.style.background = '#dc3545';
+    btn.disabled = false;
     setTimeout(function() {{
       btn.textContent = 'Copiar texto';
       btn.style.background = '#0d6efd';
     }}, 2500);
   }}
+
+  // Tenta ler o valor atual da textarea no documento pai via postMessage
+  var fallbackB64 = '{b64}';
+  var respondido = false;
+
+  function usarFallback() {{
+    if (respondido) return;
+    respondido = true;
+    var bytes = Uint8Array.from(atob(fallbackB64), function(c) {{ return c.charCodeAt(0); }});
+    var txt = new TextDecoder('utf-8').decode(bytes);
+    executarCopia(txt);
+  }}
+
+  // Listener para receber o texto atual do pai
+  function onResposta(e) {{
+    if (!e.data || e.data.type !== 'ANT_TEXTAREA_VALUE_{uid}') return;
+    if (respondido) return;
+    respondido = true;
+    window.removeEventListener('message', onResposta);
+    executarCopia(e.data.value || '');
+  }}
+  window.addEventListener('message', onResposta);
+
+  // Solicita o valor atual ao pai
+  window.parent.postMessage({{
+    type: 'ANT_GET_TEXTAREA_{uid}',
+    key:  '{key}'
+  }}, '*');
+
+  // Timeout: se o pai não responder em 400ms, usa o fallback
+  setTimeout(usarFallback, 400);
 }}
 </script>
 """
+    # Listener no documento pai que responde com o valor atual da textarea
+    # Injetado via st.markdown uma vez por key (sobrevive a reruns)
+    listener_key = f"_ta_listener_{uid}"
+    if listener_key not in st.session_state:
+        st.session_state[listener_key] = True
+
+    st.markdown(f"""
+<script>
+(function() {{
+  var lk = '_ant_ta_listener_{uid}';
+  if (window[lk]) return;
+  window[lk] = true;
+  window.addEventListener('message', function(e) {{
+    if (!e.data || e.data.type !== 'ANT_GET_TEXTAREA_{uid}') return;
+    // Procura a textarea do Streamlit pelo atributo aria-label ou data-testid
+    var key = e.data.key;
+    var ta = null;
+
+    // Tenta encontrar pelo aria-label (Streamlit usa o label do widget)
+    var todas = document.querySelectorAll('textarea');
+    for (var i = 0; i < todas.length; i++) {{
+      var ariaLabel = todas[i].getAttribute('aria-label') || '';
+      var testid    = todas[i].closest('[data-testid]');
+      // Streamlit associa o key ao id do elemento pai
+      if (todas[i].id && todas[i].id.indexOf(key.replace(/_/g,'-')) >= 0) {{
+        ta = todas[i]; break;
+      }}
+    }}
+    // Fallback: última textarea visível na página
+    if (!ta && todas.length > 0) {{
+      for (var j = todas.length - 1; j >= 0; j--) {{
+        if (todas[j].offsetParent !== null) {{ ta = todas[j]; break; }}
+      }}
+    }}
+
+    var valor = ta ? ta.value : null;
+    // Envia de volta para o iframe
+    var iframes = document.querySelectorAll('iframe');
+    for (var k = 0; k < iframes.length; k++) {{
+      try {{
+        iframes[k].contentWindow.postMessage({{
+          type: 'ANT_TEXTAREA_VALUE_{uid}',
+          value: valor
+        }}, '*');
+      }} catch(ex) {{}}
+    }}
+  }});
+}})();
+</script>
+""", unsafe_allow_html=True)
+
     st.components.v1.html(html, height=55)
 
 
