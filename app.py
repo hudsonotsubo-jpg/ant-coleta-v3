@@ -157,33 +157,60 @@ function copiarTexto_{uid}() {{
   window[lk] = true;
   window.addEventListener('message', function(e) {{
     if (!e.data || e.data.type !== 'ANT_GET_TEXTAREA_{uid}') return;
-    // Procura a textarea do Streamlit pelo atributo aria-label ou data-testid
     var key = e.data.key;
     var ta = null;
 
-    // Tenta encontrar pelo aria-label (Streamlit usa o label do widget)
+    // Estratégia 1: busca pelo id do elemento (Streamlit usa key no id)
     var todas = document.querySelectorAll('textarea');
+    var keyHifenizado = key.replace(/_/g, '-');
     for (var i = 0; i < todas.length; i++) {{
-      var ariaLabel = todas[i].getAttribute('aria-label') || '';
-      var testid    = todas[i].closest('[data-testid]');
-      // Streamlit associa o key ao id do elemento pai
-      if (todas[i].id && todas[i].id.indexOf(key.replace(/_/g,'-')) >= 0) {{
-        ta = todas[i]; break;
+      var elId = todas[i].id || '';
+      if (elId.indexOf(keyHifenizado) >= 0) {{ ta = todas[i]; break; }}
+    }}
+
+    // Estratégia 2: busca pelo aria-label (label do st.text_area)
+    if (!ta) {{
+      for (var i = 0; i < todas.length; i++) {{
+        var lbl = (todas[i].getAttribute('aria-label') || '').toLowerCase();
+        var keyLower = key.replace(/_/g,' ').toLowerCase();
+        if (lbl === keyLower || lbl.indexOf(keyLower) >= 0) {{ ta = todas[i]; break; }}
       }}
     }}
-    // Fallback: última textarea visível na página
-    if (!ta && todas.length > 0) {{
+
+    // Estratégia 3: encontra o iframe que enviou a mensagem e pega
+    // a textarea imediatamente anterior a ele no DOM
+    if (!ta) {{
+      var iframes = document.querySelectorAll('iframe');
+      var iframeSrc = null;
+      for (var k = 0; k < iframes.length; k++) {{
+        try {{
+          if (iframes[k].contentWindow === e.source) {{ iframeSrc = iframes[k]; break; }}
+        }} catch(ex) {{}}
+      }}
+      if (iframeSrc) {{
+        // Procura a textarea mais próxima ANTES do iframe no DOM
+        var allEls = Array.from(document.querySelectorAll('textarea, iframe'));
+        var iframeIdx = allEls.indexOf(iframeSrc);
+        for (var m = iframeIdx - 1; m >= 0; m--) {{
+          if (allEls[m].tagName === 'TEXTAREA' && allEls[m].offsetParent !== null) {{
+            ta = allEls[m]; break;
+          }}
+        }}
+      }}
+    }}
+
+    // Estratégia 4: última textarea visível (fallback final)
+    if (!ta) {{
       for (var j = todas.length - 1; j >= 0; j--) {{
         if (todas[j].offsetParent !== null) {{ ta = todas[j]; break; }}
       }}
     }}
 
     var valor = ta ? ta.value : null;
-    // Envia de volta para o iframe
-    var iframes = document.querySelectorAll('iframe');
-    for (var k = 0; k < iframes.length; k++) {{
+    var iframes2 = document.querySelectorAll('iframe');
+    for (var k = 0; k < iframes2.length; k++) {{
       try {{
-        iframes[k].contentWindow.postMessage({{
+        iframes2[k].contentWindow.postMessage({{
           type: 'ANT_TEXTAREA_VALUE_{uid}',
           value: valor
         }}, '*');
@@ -2084,6 +2111,8 @@ with aba2:
                             key=edit_key,
                             label_visibility="collapsed",
                         )
+                        # Passa a mesma key da textarea para que o botão
+                        # encontre o elemento correto no DOM e leia o valor editado
                         botao_copiar_seguro(
                             st.session_state.get(edit_key, paragrafo),
                             key=edit_key
