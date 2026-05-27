@@ -1505,7 +1505,10 @@ def listar_pendencias_lote(campos):
         "Contato": normalizar_contato(campos["contato"]) if campos["contato"] else "não encontrado",
     }
 
-    return [campo for campo, valor in bloco.items() if not valor or valor == "não encontrado"]
+    return [
+        campo for campo, valor in bloco.items()
+        if not valor or valor.strip().lower() in ("não encontrado", "nao encontrado", "não encontrada", "")
+    ]
 
 
 def extrair_mes_do_campo_data(data_val: str) -> str:
