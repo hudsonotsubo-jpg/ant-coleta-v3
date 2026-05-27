@@ -1433,13 +1433,30 @@ def montar_mensagem(texto):
     )
 
 
+def quebrar_telefone(contato: str) -> str:
+    """
+    Insere um espaço de largura zero (U+200B) entre os dígitos do telefone
+    para evitar que o Instagram/WhatsApp gere link clicável automaticamente.
+    Aplicado apenas quando o contato parece ser um número de telefone.
+    """
+    import re as _re
+    # Detecta sequências de dígitos com possíveis separadores (espaço, hífen, parênteses)
+    def inserir_zwsp(m):
+        return "​".join(m.group(0))
+    # Aplica apenas em blocos de dígitos dentro do contato
+    return _re.sub(r"\d+", inserir_zwsp, contato)
+
+
 def montar_bloco_informacoes_lote(campos):
     data_visual = normalizar_data_visual_ant(campos["data"])
     cidade_uf = normalizar_cidade_uf(campos["cidade_uf"])
     categorias = padronizar_categorias(campos["categorias"])
-    contato = normalizar_contato(campos["contato"])
+    contato_raw = normalizar_contato(campos["contato"])
     torneio = capitalizar_texto_inteligente(campos["torneio"])
     local = capitalizar_texto_inteligente(campos["local"])
+
+    # Quebra o número para evitar link automático do WhatsApp no Instagram
+    contato = quebrar_telefone(contato_raw) if contato_raw else "não encontrado"
 
     return (
         f"Data: {data_visual or 'não encontrado'}\n"
@@ -1447,7 +1464,7 @@ def montar_bloco_informacoes_lote(campos):
         f"Cidade/ES: {cidade_uf or 'não encontrado'}\n"
         f"Local: {local or 'não encontrado'}\n"
         f"Categorias: {categorias or 'não encontrado'}\n"
-        f"Contato: {contato or 'não encontrado'}"
+        f"Contato: {contato}"
     )
 
 
@@ -1962,14 +1979,14 @@ with aba2:
                 if st.button("Montar fila de directs", key="btn_montar_fila"):
                     fila = []
                     for campos in campos_lote_extraidos:
-                        if campos.get("instagrams"):
-                            fila.append({
-                                "perfis": campos["instagrams"],
-                                "campos": campos,
-                                "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
-                            })
+                        # Inclui todos os torneios, com ou sem @perfil identificado
+                        fila.append({
+                            "perfis": campos.get("instagrams", []),
+                            "campos": campos,
+                            "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
+                        })
                     if not fila:
-                        st.warning("Nenhum torneio com @perfil identificado.")
+                        st.warning("Nenhum torneio encontrado na extração.")
                     else:
                         st.session_state["fila_directs"] = fila
                         st.session_state["fila_idx"] = 0
@@ -2036,11 +2053,41 @@ with aba2:
                         )
                     else:
                         st.success("✅ Todas as informações encontradas.")
+                    # ── Emojis para curtir/comentar ──
+                    st.markdown("**Antes de enviar — curta o post e deixe um comentário:**")
+                    emojis_comentario = "🔥👏🏼👏🏼👏🏼"
+                    col_emoji, col_btn_emoji = st.columns([4, 1])
+                    with col_emoji:
+                        st.code(emojis_comentario, language=None)
+                    with col_btn_emoji:
+                        botao_copiar_seguro(emojis_comentario, key=f"emoji_direct_{idx}")
+
+                    st.divider()
+
+                    # ── Parágrafos editáveis ──
                     paragrafos = montar_paragrafos_direct(campos, tipo_final)
                     st.markdown("**Copie e envie parágrafo por parágrafo:**")
+
+                    # Inicializa os parágrafos editáveis no session_state
+                    para_key_base = f"direct_paras_{idx}"
+                    if st.session_state.get(f"_direct_paras_base_{idx}") != paragrafos:
+                        for i_p, para in enumerate(paragrafos):
+                            st.session_state[f"{para_key_base}_{i_p}"] = para
+                        st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
+
                     for i_p, paragrafo in enumerate(paragrafos, start=1):
                         st.caption(f"Parágrafo {i_p}")
-                        st.code(paragrafo, language=None)
+                        edit_key = f"{para_key_base}_{i_p-1}"
+                        st.text_area(
+                            f"Parágrafo {i_p}",
+                            height=120,
+                            key=edit_key,
+                            label_visibility="collapsed",
+                        )
+                        botao_copiar_seguro(
+                            st.session_state.get(edit_key, paragrafo),
+                            key=edit_key
+                        )
 
                 st.divider()
                 if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
