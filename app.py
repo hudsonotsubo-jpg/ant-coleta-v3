@@ -2075,14 +2075,23 @@ with aba2:
                     st.divider()
                     tipo_final = fila[idx]["tipo"]
                     pendencias_item = listar_pendencias_lote(campos)
+                    forcar_completa_key = f"forcar_msg_completa_{idx}"
+
                     if pendencias_item:
                         st.warning(
                             "⚠️ Informações incompletas: **"
                             + ", ".join(pendencias_item)
                             + "**. A mensagem já reflete as pendências."
                         )
+                        if st.button(
+                            "✅ Já preenchi as informações — usar mensagem para dados completos",
+                            key=f"btn_forcar_completa_{idx}",
+                        ):
+                            st.session_state[forcar_completa_key] = True
+                            st.rerun()
                     else:
                         st.success("✅ Todas as informações encontradas.")
+                        st.session_state.pop(forcar_completa_key, None)
                     # ── Emojis para curtir/comentar ──
                     st.markdown("**Antes de enviar — curta o post e deixe um comentário:**")
                     emojis_comentario = "🔥👏🏼👏🏼👏🏼"
@@ -2095,7 +2104,37 @@ with aba2:
                     st.divider()
 
                     # ── Parágrafos editáveis ──
-                    paragrafos = montar_paragrafos_direct(campos, tipo_final)
+                    # Se o usuário indicou que preencheu as pendências manualmente,
+                    # usa a versão de mensagem completa (sem mencionar pendências)
+                    if st.session_state.get(forcar_completa_key) and pendencias_item:
+                        bloco_info = montar_bloco_informacoes_lote(campos)
+                        mes_pc = extrair_mes_do_campo_data(campos.get("data", ""))
+                        mes_txt_pc = f" de {mes_pc}" if mes_pc else ""
+                        if tipo_final == "novo":
+                            abertura_pc = [
+                                "Fala pessoal!\nTudo bem?",
+                                "Trabalhamos com a divulgação de torneios de futevôlei de todo o Brasil, "
+                                "através da Agenda Nacional de Torneios.",
+                                "Gostariam de divulgar o torneio de vocês na nossa página de forma GRATUITA?",
+                            ]
+                        else:
+                            abertura_pc = [
+                                "Fala pessoal!\nTudo bem?",
+                                f"Bora divulgar o torneio{mes_txt_pc} na Agenda Nacional de Torneios?",
+                            ]
+                        paragrafos = abertura_pc + [
+                            "Preciso apenas que me envie a arte de divulgação do evento para "
+                            "podermos repostá-la na nossa página e confirme as informações abaixo:",
+                            bloco_info,
+                        ]
+                        if st.button(
+                            "↩ Voltar para mensagem com pendências",
+                            key=f"btn_voltar_pendencias_{idx}",
+                        ):
+                            st.session_state.pop(forcar_completa_key, None)
+                            st.rerun()
+                    else:
+                        paragrafos = montar_paragrafos_direct(campos, tipo_final)
                     st.markdown("**Copie e envie parágrafo por parágrafo:**")
 
                     # Inicializa os parágrafos editáveis no session_state
