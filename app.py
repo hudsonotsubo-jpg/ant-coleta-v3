@@ -157,60 +157,33 @@ function copiarTexto_{uid}() {{
   window[lk] = true;
   window.addEventListener('message', function(e) {{
     if (!e.data || e.data.type !== 'ANT_GET_TEXTAREA_{uid}') return;
+    // Procura a textarea do Streamlit pelo atributo aria-label ou data-testid
     var key = e.data.key;
     var ta = null;
 
-    // Estratégia 1: busca pelo id do elemento (Streamlit usa key no id)
+    // Tenta encontrar pelo aria-label (Streamlit usa o label do widget)
     var todas = document.querySelectorAll('textarea');
-    var keyHifenizado = key.replace(/_/g, '-');
     for (var i = 0; i < todas.length; i++) {{
-      var elId = todas[i].id || '';
-      if (elId.indexOf(keyHifenizado) >= 0) {{ ta = todas[i]; break; }}
-    }}
-
-    // Estratégia 2: busca pelo aria-label (label do st.text_area)
-    if (!ta) {{
-      for (var i = 0; i < todas.length; i++) {{
-        var lbl = (todas[i].getAttribute('aria-label') || '').toLowerCase();
-        var keyLower = key.replace(/_/g,' ').toLowerCase();
-        if (lbl === keyLower || lbl.indexOf(keyLower) >= 0) {{ ta = todas[i]; break; }}
+      var ariaLabel = todas[i].getAttribute('aria-label') || '';
+      var testid    = todas[i].closest('[data-testid]');
+      // Streamlit associa o key ao id do elemento pai
+      if (todas[i].id && todas[i].id.indexOf(key.replace(/_/g,'-')) >= 0) {{
+        ta = todas[i]; break;
       }}
     }}
-
-    // Estratégia 3: encontra o iframe que enviou a mensagem e pega
-    // a textarea imediatamente anterior a ele no DOM
-    if (!ta) {{
-      var iframes = document.querySelectorAll('iframe');
-      var iframeSrc = null;
-      for (var k = 0; k < iframes.length; k++) {{
-        try {{
-          if (iframes[k].contentWindow === e.source) {{ iframeSrc = iframes[k]; break; }}
-        }} catch(ex) {{}}
-      }}
-      if (iframeSrc) {{
-        // Procura a textarea mais próxima ANTES do iframe no DOM
-        var allEls = Array.from(document.querySelectorAll('textarea, iframe'));
-        var iframeIdx = allEls.indexOf(iframeSrc);
-        for (var m = iframeIdx - 1; m >= 0; m--) {{
-          if (allEls[m].tagName === 'TEXTAREA' && allEls[m].offsetParent !== null) {{
-            ta = allEls[m]; break;
-          }}
-        }}
-      }}
-    }}
-
-    // Estratégia 4: última textarea visível (fallback final)
-    if (!ta) {{
+    // Fallback: última textarea visível na página
+    if (!ta && todas.length > 0) {{
       for (var j = todas.length - 1; j >= 0; j--) {{
         if (todas[j].offsetParent !== null) {{ ta = todas[j]; break; }}
       }}
     }}
 
     var valor = ta ? ta.value : null;
-    var iframes2 = document.querySelectorAll('iframe');
-    for (var k = 0; k < iframes2.length; k++) {{
+    // Envia de volta para o iframe
+    var iframes = document.querySelectorAll('iframe');
+    for (var k = 0; k < iframes.length; k++) {{
       try {{
-        iframes2[k].contentWindow.postMessage({{
+        iframes[k].contentWindow.postMessage({{
           type: 'ANT_TEXTAREA_VALUE_{uid}',
           value: valor
         }}, '*');
@@ -1460,30 +1433,13 @@ def montar_mensagem(texto):
     )
 
 
-def quebrar_telefone(contato: str) -> str:
-    """
-    Insere um espaço de largura zero (U+200B) entre os dígitos do telefone
-    para evitar que o Instagram/WhatsApp gere link clicável automaticamente.
-    Aplicado apenas quando o contato parece ser um número de telefone.
-    """
-    import re as _re
-    # Detecta sequências de dígitos com possíveis separadores (espaço, hífen, parênteses)
-    def inserir_zwsp(m):
-        return "​".join(m.group(0))
-    # Aplica apenas em blocos de dígitos dentro do contato
-    return _re.sub(r"\d+", inserir_zwsp, contato)
-
-
 def montar_bloco_informacoes_lote(campos):
     data_visual = normalizar_data_visual_ant(campos["data"])
     cidade_uf = normalizar_cidade_uf(campos["cidade_uf"])
     categorias = padronizar_categorias(campos["categorias"])
-    contato_raw = normalizar_contato(campos["contato"])
+    contato = normalizar_contato(campos["contato"])
     torneio = capitalizar_texto_inteligente(campos["torneio"])
     local = capitalizar_texto_inteligente(campos["local"])
-
-    # Quebra o número para evitar link automático do WhatsApp no Instagram
-    contato = quebrar_telefone(contato_raw) if contato_raw else "não encontrado"
 
     return (
         f"Data: {data_visual or 'não encontrado'}\n"
@@ -1491,7 +1447,7 @@ def montar_bloco_informacoes_lote(campos):
         f"Cidade/ES: {cidade_uf or 'não encontrado'}\n"
         f"Local: {local or 'não encontrado'}\n"
         f"Categorias: {categorias or 'não encontrado'}\n"
-        f"Contato: {contato}"
+        f"Contato: {contato or 'não encontrado'}"
     )
 
 
@@ -1505,10 +1461,7 @@ def listar_pendencias_lote(campos):
         "Contato": normalizar_contato(campos["contato"]) if campos["contato"] else "não encontrado",
     }
 
-    return [
-        campo for campo, valor in bloco.items()
-        if not valor or valor.strip().lower() in ("não encontrado", "nao encontrado", "não encontrada", "")
-    ]
+    return [campo for campo, valor in bloco.items() if not valor or valor == "não encontrado"]
 
 
 def extrair_mes_do_campo_data(data_val: str) -> str:
@@ -2009,14 +1962,14 @@ with aba2:
                 if st.button("Montar fila de directs", key="btn_montar_fila"):
                     fila = []
                     for campos in campos_lote_extraidos:
-                        # Inclui todos os torneios, com ou sem @perfil identificado
-                        fila.append({
-                            "perfis": campos.get("instagrams", []),
-                            "campos": campos,
-                            "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
-                        })
+                        if campos.get("instagrams"):
+                            fila.append({
+                                "perfis": campos["instagrams"],
+                                "campos": campos,
+                                "tipo": "novo" if tipo_global == "Novo contato" else "recorrente",
+                            })
                     if not fila:
-                        st.warning("Nenhum torneio encontrado na extração.")
+                        st.warning("Nenhum torneio com @perfil identificado.")
                     else:
                         st.session_state["fila_directs"] = fila
                         st.session_state["fila_idx"] = 0
@@ -2075,51 +2028,66 @@ with aba2:
                     st.divider()
                     tipo_final = fila[idx]["tipo"]
                     pendencias_item = listar_pendencias_lote(campos)
+
+                    # Chave de controle: se o usuário forçou mensagem completa para este item
+                    forcar_completa_key = f"forcar_msg_completa_{idx}"
+
                     if pendencias_item:
                         st.warning(
                             "⚠️ Informações incompletas: **"
                             + ", ".join(pendencias_item)
                             + "**. A mensagem já reflete as pendências."
                         )
+                        # Botão para usar a mensagem de informações completas
+                        # mesmo com pendências (quando o usuário preencheu manualmente)
+                        if st.button(
+                            "✅ Já preenchi as informações — usar mensagem para dados completos",
+                            key=f"btn_forcar_completa_{idx}",
+                        ):
+                            st.session_state[forcar_completa_key] = True
+                            st.rerun()
                     else:
                         st.success("✅ Todas as informações encontradas.")
-                    # ── Emojis para curtir/comentar ──
-                    st.markdown("**Antes de enviar — curta o post e deixe um comentário:**")
-                    emojis_comentario = "🔥👏🏼👏🏼👏🏼"
-                    col_emoji, col_btn_emoji = st.columns([4, 1])
-                    with col_emoji:
-                        st.code(emojis_comentario, language=None)
-                    with col_btn_emoji:
-                        botao_copiar_seguro(emojis_comentario, key=f"emoji_direct_{idx}")
+                        # Limpa o forçamento se as informações já estão completas
+                        st.session_state.pop(forcar_completa_key, None)
 
-                    st.divider()
+                    # Usa versão "completa" se o usuário solicitou, mesmo com pendências
+                    usar_msg_completa = st.session_state.get(forcar_completa_key, False)
+                    if usar_msg_completa and pendencias_item:
+                        # Monta parágrafos como se não houvesse pendências
+                        bloco_info = montar_bloco_informacoes_lote(campos)
+                        mes = extrair_mes_do_campo_data(campos.get("data", ""))
+                        mes_txt = f" de {mes}" if mes else ""
+                        if tipo_final == "novo":
+                            abertura = [
+                                "Fala pessoal!\nTudo bem?",
+                                "Trabalhamos com a divulgação de torneios de futevôlei de todo o Brasil, "
+                                "através da Agenda Nacional de Torneios.",
+                                "Gostariam de divulgar o torneio de vocês na nossa página de forma GRATUITA?",
+                            ]
+                        else:
+                            abertura = [
+                                "Fala pessoal!\nTudo bem?",
+                                f"Bora divulgar o torneio{mes_txt} na Agenda Nacional de Torneios?",
+                            ]
+                        paragrafos = abertura + [
+                            "Preciso apenas que me envie a arte de divulgação do evento para "
+                            "podermos repostá-la na nossa página e confirme as informações abaixo:",
+                            bloco_info,
+                        ]
+                        if st.button(
+                            "↩ Voltar para mensagem com pendências",
+                            key=f"btn_voltar_pendencias_{idx}",
+                        ):
+                            st.session_state.pop(forcar_completa_key, None)
+                            st.rerun()
+                    else:
+                        paragrafos = montar_paragrafos_direct(campos, tipo_final)
 
-                    # ── Parágrafos editáveis ──
-                    paragrafos = montar_paragrafos_direct(campos, tipo_final)
                     st.markdown("**Copie e envie parágrafo por parágrafo:**")
-
-                    # Inicializa os parágrafos editáveis no session_state
-                    para_key_base = f"direct_paras_{idx}"
-                    if st.session_state.get(f"_direct_paras_base_{idx}") != paragrafos:
-                        for i_p, para in enumerate(paragrafos):
-                            st.session_state[f"{para_key_base}_{i_p}"] = para
-                        st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
-
                     for i_p, paragrafo in enumerate(paragrafos, start=1):
                         st.caption(f"Parágrafo {i_p}")
-                        edit_key = f"{para_key_base}_{i_p-1}"
-                        st.text_area(
-                            f"Parágrafo {i_p}",
-                            height=120,
-                            key=edit_key,
-                            label_visibility="collapsed",
-                        )
-                        # Passa a mesma key da textarea para que o botão
-                        # encontre o elemento correto no DOM e leia o valor editado
-                        botao_copiar_seguro(
-                            st.session_state.get(edit_key, paragrafo),
-                            key=edit_key
-                        )
+                        st.code(paragrafo, language=None)
 
                 st.divider()
                 if st.button("🔄 Reiniciar fila", key="btn_reiniciar_fila"):
