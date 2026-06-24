@@ -1629,7 +1629,7 @@ Regras obrigatórias:
   10 e 11/04/{ano_2}
   10, 11 e 12/04/{ano_2}
   30, 31/03 e 01/04/{ano_2}
-- Se o ano não estiver informado na imagem, assuma o ano corrente ({ano_2}).
+- Se o ano não estiver informado na imagem, use OBRIGATORIAMENTE o ano {ano_2} (é o ano atual — nunca use anos anteriores como 2025).
 - Cidade/ES deve sempre estar no formato Cidade/UF (sigla do estado com 2 letras).
 - Preserve categorias compostas com +, por exemplo B+C e A+B.
 - No nome do torneio, cidade e local, use capitalização inteligente:
@@ -1674,7 +1674,7 @@ Regras obrigatórias:
   10 e 11/04/{ano_2}
   10, 11 e 12/04/{ano_2}
   30, 31/03 e 01/04/{ano_2}
-- Se o ano não estiver informado na imagem, assuma o ano corrente ({ano_2}).
+- Se o ano não estiver informado na imagem, use OBRIGATORIAMENTE o ano {ano_2} (é o ano atual — nunca use anos anteriores como 2025).
 - Cidade/ES deve sempre estar no formato Cidade/UF (sigla do estado com 2 letras).
 - Preserve categorias compostas com +, por exemplo B+C e A+B.
 - No nome do torneio, cidade e local, use capitalização inteligente:
@@ -2163,42 +2163,26 @@ with aba2:
                         paragrafos = montar_paragrafos_direct(campos, tipo_final)
                     st.markdown("**Copie e envie parágrafo por parágrafo:**")
 
-                    # Inicializa os parágrafos editáveis no session_state
-                    para_key_base = f"direct_paras_{idx}"
-                    editado_key = f"_direct_paras_editado_{idx}"
+                    # Chave base para os parágrafos deste torneio/modo
+                    # Inclui o modo (forcar_completa) para que a mudança de modo
+                    # gere keys novas, evitando conflito de tamanho de lista
+                    modo_para = "completo" if st.session_state.get(forcar_completa_key) else tipo_final
+                    para_key_base = f"direct_paras_{idx}_{modo_para}"
+                    editado_key = f"_direct_paras_editado_{idx}_{modo_para}"
 
-                    # Detecta se o usuário editou algum parágrafo manualmente
-                    paras_atuais = [
-                        st.session_state.get(f"{para_key_base}_{i_p}")
-                        for i_p in range(len(paragrafos))
-                    ]
-                    usuario_editou = (
-                        st.session_state.get(editado_key, False) or
-                        any(
-                            p is not None and p != orig
-                            for p, orig in zip(
-                                paras_atuais,
-                                st.session_state.get(f"_direct_paras_base_{idx}", paragrafos)
-                            )
-                        )
-                    )
-
-                    if not usuario_editou:
-                        # Usuário não editou — atualiza normalmente (ex.: mudança de tipo)
+                    # Inicializa os parágrafos no session_state se ainda não existem
+                    # ou se o número de parágrafos mudou (novo modo/tipo)
+                    n_paras_salvo = st.session_state.get(f"_direct_paras_n_{idx}_{modo_para}", -1)
+                    if n_paras_salvo != len(paragrafos):
                         for i_p, para in enumerate(paragrafos):
                             st.session_state[f"{para_key_base}_{i_p}"] = para
-                        st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
-                        st.session_state[editado_key] = False
-                    elif st.session_state.get(f"_direct_paras_base_{idx}") is None:
-                        # Primeira vez que este torneio aparece — inicializa
-                        for i_p, para in enumerate(paragrafos):
-                            st.session_state[f"{para_key_base}_{i_p}"] = para
-                        st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
+                        st.session_state[f"_direct_paras_n_{idx}_{modo_para}"] = len(paragrafos)
                         st.session_state[editado_key] = False
 
                     for i_p, paragrafo in enumerate(paragrafos, start=1):
                         st.caption(f"Parágrafo {i_p}")
                         edit_key = f"{para_key_base}_{i_p-1}"
+
                         def _marcar_editado(k=editado_key):
                             st.session_state[k] = True
 
