@@ -1317,6 +1317,9 @@ def normalizar_categoria_individual(cat):
     cat = limpar_espacos(cat)
     if not cat:
         return ""
+    # Capitaliza inteligentemente (primeira letra maiúscula, demais minúsculas,
+    # exceto preposições) antes de aplicar as regras de níveis (A, B, A+B, etc.)
+    cat = capitalizar_texto_inteligente(cat)
     cat = aplicar_maiusculas_niveis(cat)
     return cat
 
