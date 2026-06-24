@@ -954,8 +954,16 @@ def normalizar_imagem_para_api(uploaded_file):
         elif img.mode != "RGB":
             img = img.convert("RGB")
 
+        # Redimensiona imagens muito grandes para evitar estouro do buffer WebSocket
+        # Limite: 1600px na maior dimensão (suficiente para a API Claude)
+        MAX_DIM = 1600
+        w, h = img.size
+        if max(w, h) > MAX_DIM:
+            escala = MAX_DIM / max(w, h)
+            img = img.resize((int(w * escala), int(h * escala)), Image.LANCZOS)
+
         buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=92, optimize=True)
+        img.save(buffer, format="JPEG", quality=85, optimize=True)
         buffer.seek(0)
         return buffer.getvalue(), "image/jpeg"
 
@@ -1940,27 +1948,45 @@ with aba2:
 
             for i, img in enumerate(prints_lote, start=1):
                 status_extracao.caption(f"Extraindo torneio {i} de {total}...")
-                try:
-                    resultado = extrair_texto_lote_1_torneio(img)
-                    campos = extrair_campos_lote(resultado)
-                    mensagem_direct = decodificar_texto(montar_mensagem_direct_lote(campos))
-                    campos_lote_extraidos.append(campos)
-                except Exception as e:
-                    campos = {
-                        "instagrams": [], "data": "", "torneio": "",
-                        "cidade_uf": "", "local": "", "categorias": "",
-                        "contato": f"erro na extração ({repr(e)})"
-                    }
-                    mensagem_direct = (
-                        "Instagram: não encontrado\n\n"
-                        "Data: não encontrado\n"
-                        "Torneio: não encontrado\n"
-                        "Cidade/ES: não encontrado\n"
-                        "Local: não encontrado\n"
-                        "Categorias: não encontrado\n"
-                        f"Contato: erro na extração ({repr(e)})"
-                    )
-                    campos_lote_extraidos.append(campos)
+                tentativas = 0
+                max_tentativas = 2
+                resultado_ok = False
+
+                while tentativas < max_tentativas and not resultado_ok:
+                    try:
+                        resultado = extrair_texto_lote_1_torneio(img)
+                        campos = extrair_campos_lote(resultado)
+                        # Valida se a extração retornou algo útil
+                        campos_preenchidos = sum(
+                            1 for v in campos.values()
+                            if v and str(v).strip().lower() not in ("não encontrado", "")
+                        )
+                        if campos_preenchidos == 0 and tentativas < max_tentativas - 1:
+                            # Extração retornou tudo vazio — tenta de novo
+                            tentativas += 1
+                            continue
+                        mensagem_direct = decodificar_texto(montar_mensagem_direct_lote(campos))
+                        campos_lote_extraidos.append(campos)
+                        resultado_ok = True
+                    except Exception as e:
+                        tentativas += 1
+                        if tentativas >= max_tentativas:
+                            campos = {
+                                "instagrams": [], "data": "", "torneio": "",
+                                "cidade_uf": "", "local": "", "categorias": "",
+                                "contato": f"erro na extração ({repr(e)})"
+                            }
+                            mensagem_direct = (
+                                "Instagram: não encontrado\n\n"
+                                "Data: não encontrado\n"
+                                "Torneio: não encontrado\n"
+                                "Cidade/ES: não encontrado\n"
+                                "Local: não encontrado\n"
+                                "Categorias: não encontrado\n"
+                                f"Contato: erro na extração ({repr(e)})"
+                            )
+                            campos_lote_extraidos.append(campos)
+                            resultado_ok = True
 
                 blocos_lote.append({
                     "arquivo": img.name,
@@ -2139,19 +2165,49 @@ with aba2:
 
                     # Inicializa os parágrafos editáveis no session_state
                     para_key_base = f"direct_paras_{idx}"
-                    if st.session_state.get(f"_direct_paras_base_{idx}") != paragrafos:
+                    editado_key = f"_direct_paras_editado_{idx}"
+
+                    # Detecta se o usuário editou algum parágrafo manualmente
+                    paras_atuais = [
+                        st.session_state.get(f"{para_key_base}_{i_p}")
+                        for i_p in range(len(paragrafos))
+                    ]
+                    usuario_editou = (
+                        st.session_state.get(editado_key, False) or
+                        any(
+                            p is not None and p != orig
+                            for p, orig in zip(
+                                paras_atuais,
+                                st.session_state.get(f"_direct_paras_base_{idx}", paragrafos)
+                            )
+                        )
+                    )
+
+                    if not usuario_editou:
+                        # Usuário não editou — atualiza normalmente (ex.: mudança de tipo)
                         for i_p, para in enumerate(paragrafos):
                             st.session_state[f"{para_key_base}_{i_p}"] = para
                         st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
+                        st.session_state[editado_key] = False
+                    elif st.session_state.get(f"_direct_paras_base_{idx}") is None:
+                        # Primeira vez que este torneio aparece — inicializa
+                        for i_p, para in enumerate(paragrafos):
+                            st.session_state[f"{para_key_base}_{i_p}"] = para
+                        st.session_state[f"_direct_paras_base_{idx}"] = paragrafos
+                        st.session_state[editado_key] = False
 
                     for i_p, paragrafo in enumerate(paragrafos, start=1):
                         st.caption(f"Parágrafo {i_p}")
                         edit_key = f"{para_key_base}_{i_p-1}"
+                        def _marcar_editado(k=editado_key):
+                            st.session_state[k] = True
+
                         st.text_area(
                             f"Parágrafo {i_p}",
                             height=120,
                             key=edit_key,
                             label_visibility="collapsed",
+                            on_change=_marcar_editado,
                         )
                         # Passa a mesma key da textarea para que o botão
                         # encontre o elemento correto no DOM e leia o valor editado
