@@ -954,16 +954,16 @@ def normalizar_imagem_para_api(uploaded_file):
         elif img.mode != "RGB":
             img = img.convert("RGB")
 
-        # Redimensiona imagens muito grandes para evitar estouro do buffer WebSocket
-        # Limite: 1600px na maior dimensão (suficiente para a API Claude)
-        MAX_DIM = 1600
+        # Redimensiona imagens para economizar memória no Streamlit Cloud
+        # 1200px é suficiente para extração de texto pela API Claude
+        MAX_DIM = 1200
         w, h = img.size
         if max(w, h) > MAX_DIM:
             escala = MAX_DIM / max(w, h)
             img = img.resize((int(w * escala), int(h * escala)), Image.LANCZOS)
 
         buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85, optimize=True)
+        img.save(buffer, format="JPEG", quality=75, optimize=True)
         buffer.seek(0)
         return buffer.getvalue(), "image/jpeg"
 
@@ -1905,6 +1905,8 @@ with aba1:
             mensagem = decodificar_texto(montar_mensagem(decodificar_texto(resultado)))
             st.session_state["resultado_t1"] = mensagem
             st.session_state["resultado_t1_edit"] = mensagem
+            # Libera resultado da API da memória
+            del resultado, mensagem
 
     # Exibe resultado sempre que existir no session_state
     if st.session_state.get("resultado_t1"):
@@ -1954,18 +1956,20 @@ with aba2:
                 tentativas = 0
                 max_tentativas = 2
                 resultado_ok = False
+                nome_img = img.name  # salva o nome antes de liberar a referência
 
                 while tentativas < max_tentativas and not resultado_ok:
                     try:
                         resultado = extrair_texto_lote_1_torneio(img)
                         campos = extrair_campos_lote(resultado)
+                        # Libera a string de resultado da API imediatamente
+                        del resultado
                         # Valida se a extração retornou algo útil
                         campos_preenchidos = sum(
                             1 for v in campos.values()
                             if v and str(v).strip().lower() not in ("não encontrado", "")
                         )
                         if campos_preenchidos == 0 and tentativas < max_tentativas - 1:
-                            # Extração retornou tudo vazio — tenta de novo
                             tentativas += 1
                             continue
                         mensagem_direct = decodificar_texto(montar_mensagem_direct_lote(campos))
@@ -1992,13 +1996,18 @@ with aba2:
                             resultado_ok = True
 
                 blocos_lote.append({
-                    "arquivo": img.name,
+                    "arquivo": nome_img,
                     "mensagem": mensagem_direct
                 })
+                # Libera referência à imagem após processar para economizar memória
+                del mensagem_direct
                 progress.progress(i / total)
 
             st.session_state["campos_lote_extraidos"] = campos_lote_extraidos
             st.session_state["blocos_lote"] = blocos_lote
+            # Libera listas temporárias e força coleta de lixo
+            del campos_lote_extraidos, blocos_lote
+            import gc; gc.collect()
             status_extracao.empty()
             st.success(f"Extração concluída — {total} torneio(s) processado(s).")
 
