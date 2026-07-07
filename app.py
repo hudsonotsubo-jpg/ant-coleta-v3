@@ -1853,18 +1853,49 @@ carregar_token_persistido_na_sessao()
 st.title("🏆 APP ANT v2")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
 
-aba1, aba2, aba3, aba4, aba5 = st.tabs([
-    "Extração individual",
-    "Extração em lote",
-    "Registro final do torneio",
-    "Msg. Organizadores",
-    "Limpeza pós-atualização",
-])
+_aba_ativa = st.radio(
+    "Navegação",
+    options=[
+        "Extração individual",
+        "Extração em lote",
+        "Registro final do torneio",
+        "Msg. Organizadores",
+        "Limpeza pós-atualização",
+    ],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="aba_ativa",
+)
+st.divider()
+
+class _FakeAba:
+    def __init__(self, nome): self.nome = nome
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def __bool__(self): return _aba_ativa == self.nome
+
+class _AbaContext:
+    def __init__(self, nome):
+        self.nome = nome
+        self._ativo = (_aba_ativa == nome)
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        pass
+
+def _make_aba(nome):
+    return _AbaContext(nome)
+
+aba1 = _make_aba("Extração individual")
+aba2 = _make_aba("Extração em lote")
+aba3 = _make_aba("Registro final do torneio")
+aba4 = _make_aba("Msg. Organizadores")
+aba5 = _make_aba("Limpeza pós-atualização")
 
 # =========================================
 # TELA 1 — EXTRAÇÃO INDIVIDUAL
 # =========================================
-with aba1:
+if _aba_ativa == aba1.nome:
     st.subheader("Tela 1 — Extração individual")
     st.write("Modo 1 print = 1 torneio. Envie um ou mais prints do mesmo torneio.")
 
@@ -1926,7 +1957,7 @@ with aba1:
 # =========================================
 # TELA 2 — EXTRAÇÃO EM LOTE
 # =========================================
-with aba2:
+if _aba_ativa == aba2.nome:
     st.subheader("Tela 2 — Extração em lote")
     st.write("Cada print será tratado como 1 torneio.")
 
@@ -2234,7 +2265,7 @@ with aba2:
 # =========================================
 # TELA 3 — REGISTRO FINAL DO TORNEIO
 # =========================================
-with aba3:
+if _aba_ativa == aba3.nome:
     # Garante que o session_state do lote não interfira nesta aba
     if "secao_lote_radio" in st.session_state and not st.session_state.get("campos_lote_extraidos"):
         del st.session_state["secao_lote_radio"]
@@ -2611,7 +2642,7 @@ with aba3:
 # TELA 4 — MENSAGEM DE ORGANIZADORES (NOVO)
 # Substitui o agente do ChatGPT
 # =========================================
-with aba4:
+if _aba_ativa == aba4.nome:
     st.subheader("Tela 4 — Mensagem para organizadores")
     st.write(
         "Gera automaticamente a mensagem consolidada para a lista de transmissão de organizadores. "
@@ -2726,7 +2757,7 @@ with aba4:
 # =========================================
 # TELA 5 — LIMPEZA PÓS-ATUALIZAÇÃO
 # =========================================
-with aba5:
+if _aba_ativa == aba5.nome:
     st.subheader("Tela 5 — Limpeza pós-atualização")
     st.write("Execute a limpeza somente após concluir toda a atualização da ANT e a organização dos arquivos.")
 
