@@ -2011,8 +2011,16 @@ with aba2:
             status_extracao.empty()
             st.success(f"Extração concluída — {total} torneio(s) processado(s).")
 
+    # Botão para limpar a extração e voltar ao estado inicial
+    if st.session_state.get("campos_lote_extraidos"):
+        if st.button("🗑 Limpar extração e iniciar nova", key="btn_limpar_lote"):
+            for k in ["campos_lote_extraidos", "blocos_lote", "fila_directs",
+                      "fila_idx", "texto_consolidado_edit", "_ultimo_consolidado",
+                      "secao_lote_radio"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+
     # Exibe resultados se já extraídos
-    # Radio em vez de st.tabs aninhado para evitar vazamento entre abas do Streamlit
     if st.session_state.get("campos_lote_extraidos"):
         campos_lote_extraidos = st.session_state["campos_lote_extraidos"]
         blocos_lote = st.session_state.get("blocos_lote", [])
@@ -2227,6 +2235,10 @@ with aba2:
 # TELA 3 — REGISTRO FINAL DO TORNEIO
 # =========================================
 with aba3:
+    # Garante que o session_state do lote não interfira nesta aba
+    if "secao_lote_radio" in st.session_state and not st.session_state.get("campos_lote_extraidos"):
+        del st.session_state["secao_lote_radio"]
+
     st.subheader("Tela 3 — Registro final do torneio")
     st.write("Cole o texto confirmado pelo organizador e salve na planilha e no Drive.")
 
