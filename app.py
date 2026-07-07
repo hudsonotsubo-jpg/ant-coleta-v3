@@ -2012,7 +2012,10 @@ with aba2:
             st.success(f"Extração concluída — {total} torneio(s) processado(s).")
 
     # Exibe resultados se já extraídos
-    if st.session_state.get("campos_lote_extraidos"):
+    # Container explícito isola o conteúdo da aba e evita vazamento para outras abas
+    _container_lote = st.container()
+    with _container_lote:
+      if st.session_state.get("campos_lote_extraidos"):
         campos_lote_extraidos = st.session_state["campos_lote_extraidos"]
         blocos_lote = st.session_state.get("blocos_lote", [])
 
