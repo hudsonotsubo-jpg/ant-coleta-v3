@@ -2012,17 +2012,20 @@ with aba2:
             st.success(f"Extração concluída — {total} torneio(s) processado(s).")
 
     # Exibe resultados se já extraídos
-    # Container explícito isola o conteúdo da aba e evita vazamento para outras abas
-    _container_lote = st.container()
-    with _container_lote:
-      if st.session_state.get("campos_lote_extraidos"):
+    # Radio em vez de st.tabs aninhado para evitar vazamento entre abas do Streamlit
+    if st.session_state.get("campos_lote_extraidos"):
         campos_lote_extraidos = st.session_state["campos_lote_extraidos"]
         blocos_lote = st.session_state.get("blocos_lote", [])
 
-        sub_aba_texto, sub_aba_directs = st.tabs(["📋 Texto consolidado", "📩 Envio de directs"])
+        _secao_lote = st.radio(
+            "Visualizar:",
+            options=["📋 Texto consolidado", "📩 Envio de directs"],
+            horizontal=True,
+            key="secao_lote_radio",
+            label_visibility="collapsed",
+        )
 
-        # ── Sub-aba 1: texto consolidado ──────────────────────────
-        with sub_aba_texto:
+        if _secao_lote == "📋 Texto consolidado":
             consolidado = [item["mensagem"] for item in blocos_lote]
             texto_consolidado = "\n\n" + ("\n\n" + ("—" * 40) + "\n\n").join(consolidado)
             if "texto_consolidado_edit" not in st.session_state or st.session_state.get("_ultimo_consolidado") != texto_consolidado:
@@ -2036,8 +2039,7 @@ with aba2:
             )
             botao_copiar_seguro(st.session_state.get("texto_consolidado_edit", ""), key="texto_consolidado_edit")
 
-        # ── Sub-aba 2: envio de directs ────────────────────────────
-        with sub_aba_directs:
+        elif _secao_lote == "📩 Envio de directs":
             st.write("Abra o direct de cada perfil, verifique o histórico e escolha o tipo de contato.")
 
             if "fila_directs" not in st.session_state or not st.session_state["fila_directs"]:
