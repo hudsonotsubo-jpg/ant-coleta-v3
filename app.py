@@ -1976,6 +1976,16 @@ if _aba_ativa == aba2.nome:
         if not prints_lote:
             st.error("Envie ao menos um print.")
         else:
+            # Limpa dados de extração anterior antes de iniciar nova
+            for _k in ["campos_lote_extraidos", "blocos_lote", "fila_directs",
+                       "fila_idx", "texto_consolidado_edit", "_ultimo_consolidado",
+                       "secao_lote_radio"]:
+                st.session_state.pop(_k, None)
+            # Limpa chaves de parágrafos e flags de edição de extrações anteriores
+            for _k in list(st.session_state.keys()):
+                if _k.startswith("direct_paras_") or _k.startswith("_direct_paras_") or                    _k.startswith("forcar_msg_completa_") or _k.startswith("tipo_item_"):
+                    st.session_state.pop(_k, None)
+
             progress = st.progress(0)
             status_extracao = st.empty()
             total = len(prints_lote)
