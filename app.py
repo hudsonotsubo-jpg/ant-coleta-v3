@@ -1841,17 +1841,15 @@ Instruções:
 
 
 # =========================================
-# PROCESSA CALLBACK OAUTH ANTES DA UI
-# =========================================
-processar_callback_oauth_drive()
-carregar_token_persistido_na_sessao()
-
-
-# =========================================
 # UI
 # =========================================
 st.title("🏆 APP ANT v2")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
+
+# Processa callback OAuth e carrega token — dentro da UI para evitar
+# chamadas de rede durante o startup (causa segfault no Streamlit Cloud)
+processar_callback_oauth_drive()
+carregar_token_persistido_na_sessao()
 
 # Variáveis globais usadas em múltiplas telas
 _meses_global = [
