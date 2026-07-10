@@ -1853,6 +1853,15 @@ carregar_token_persistido_na_sessao()
 st.title("🏆 APP ANT v2")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
 
+# Variáveis globais usadas em múltiplas telas
+_meses_global = [
+    "",
+    "1. Janeiro", "2. Fevereiro", "3. Março", "4. Abril",
+    "5. Maio", "6. Junho", "7. Julho", "8. Agosto",
+    "9. Setembro", "10. Outubro", "11. Novembro", "12. Dezembro"
+]
+meses_validos = _meses_global[1:]
+
 _aba_ativa = st.radio(
     "Navegação",
     options=[
