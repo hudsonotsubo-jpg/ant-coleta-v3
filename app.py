@@ -1761,85 +1761,6 @@ def extrair_texto_lote_1_torneio(imagem) -> str:
     return unquote(response.content[0].text)
 
 
-def gerar_mensagem_organizadores_claude(
-    texto_sul: str,
-    texto_norte: str,
-    link_sul: str,
-    link_norte: str,
-    total_mes1: str,
-    total_mes2: str,
-    nome_mes1: str,
-    nome_mes2: str,
-) -> str:
-    """
-    Gera a mensagem consolidada para a lista de transmissão de organizadores.
-    Substitui o agente do ChatGPT — integrado diretamente no app.
-    """
-    prompt = f"""Você é um assistente da Agenda Nacional de Torneios (ANT) de futevôlei.
-
-Gere uma mensagem consolidada para enviar à lista de transmissão de ORGANIZADORES DE TORNEIOS, informando sobre a atualização da semana.
-
-Use EXATAMENTE o padrão abaixo como referência de formato e tom. Adapte apenas os dados variáveis.
-
-Padrão de referência:
----
-Bom dia, organizadores de torneios!
-
-A Agenda Nacional de Torneios acaba de ser atualizada, com X novos eventos, dos estados abaixo:
-
-Regiões Sul e Sudeste
-📍SP. 9 novos torneios
-📍MG. 6 novos torneios
-📍RS. 4 novos torneios
-
-Regiões Norte, Nordeste e Centro-Oeste
-📍DF. 4 novos torneios
-📍BA. 2 novos torneios
-📍GO. 1 novo torneio
-
-Já são 189 TORNEIOS do mês de março e 69 TORNEIOS do mês de abril divulgados até o momento na ANT.
-
-Clique nos links abaixo e confira os torneios da sua região! 👇
-
-Agenda Sul e Sudeste
-[link_sul]
-
-Regiões Norte, Nordeste e Centro-Oeste
-[link_norte]
----
-
-Dados para gerar a mensagem desta semana:
-
-TOTAIS POR ESTADO — REGIÃO SUL/SUDESTE (novos torneios esta atualização):
-{texto_sul}
-
-TOTAIS POR ESTADO — REGIÃO NORTE/NORDESTE/CENTRO-OESTE (novos torneios esta atualização):
-{texto_norte}
-
-Total acumulado: {total_mes1} torneios de {nome_mes1} e {total_mes2} torneios de {nome_mes2}.
-
-Link agenda Sul e Sudeste: {link_sul}
-Link agenda Norte/Nordeste/Centro-Oeste: {link_norte}
-
-Instruções:
-- Conte os novos torneios de cada estado a partir dos dados acima.
-- Liste apenas estados que têm torneios NOVOS nesta atualização.
-- Ordene por quantidade de novos torneios (maior para menor) dentro de cada região.
-- Use o emoji 📍 antes de cada estado.
-- Não inclua estados com zero novos torneios.
-- Mantenha o tom informal e animado do padrão.
-- Responda APENAS com a mensagem pronta, sem explicações ou comentários."""
-
-    response = claude.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    from urllib.parse import unquote
-    return unquote(response.content[0].text)
-
-
 # =========================================
 # UI
 # =========================================
@@ -1866,7 +1787,6 @@ _aba_ativa = st.radio(
         "Extração individual",
         "Extração em lote",
         "Registro final do torneio",
-        "Msg. Organizadores",
         "Limpeza pós-atualização",
     ],
     horizontal=True,
@@ -1896,7 +1816,6 @@ def _make_aba(nome):
 aba1 = _make_aba("Extração individual")
 aba2 = _make_aba("Extração em lote")
 aba3 = _make_aba("Registro final do torneio")
-aba4 = _make_aba("Msg. Organizadores")
 aba5 = _make_aba("Limpeza pós-atualização")
 
 # =========================================
@@ -2654,122 +2573,6 @@ if _aba_ativa == aba3.nome:
 
                 st.error("Erro geral no processo.")
                 st.code(repr(e))
-
-# =========================================
-# TELA 4 — MENSAGEM DE ORGANIZADORES (NOVO)
-# Substitui o agente do ChatGPT
-# =========================================
-if _aba_ativa == aba4.nome:
-    st.subheader("Tela 4 — Mensagem para organizadores")
-    st.write(
-        "Gera automaticamente a mensagem consolidada para a lista de transmissão de organizadores. "
-        "Informe os dados abaixo após postar as agendas."
-    )
-
-    st.divider()
-
-    st.markdown("### 1. Links das postagens")
-
-    link_sul_org = st.text_input(
-        "Link da postagem — Agenda Sul e Sudeste",
-        placeholder="https://www.instagram.com/p/...",
-        key="link_sul_org"
-    )
-
-    link_norte_org = st.text_input(
-        "Link da postagem — Agenda Norte/Nordeste/Centro-Oeste",
-        placeholder="https://www.instagram.com/p/...",
-        key="link_norte_org"
-    )
-
-    st.divider()
-
-    st.markdown("### 2. Totais acumulados na agenda")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        nome_mes1_org = st.selectbox(
-            "Mês 1",
-            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
-            key="nome_mes1_org"
-        )
-        total_mes1_org = st.number_input(
-            "Total de torneios do Mês 1 (acumulado na agenda)",
-            min_value=0, value=0, step=1, key="total_mes1_org"
-        )
-
-    with col2:
-        nome_mes2_org = st.selectbox(
-            "Mês 2",
-            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"],
-            index=1,
-            key="nome_mes2_org"
-        )
-        total_mes2_org = st.number_input(
-            "Total de torneios do Mês 2 (acumulado na agenda)",
-            min_value=0, value=0, step=1, key="total_mes2_org"
-        )
-
-    st.divider()
-
-    st.markdown("### 3. Novos torneios por estado (cole o conteúdo dos arquivos gerados)")
-    st.caption("Cole o conteúdo dos arquivos mensagens_whatsapp_sul.txt e mensagens_whatsapp_norte.txt")
-
-    texto_sul_org = st.text_area(
-        "Conteúdo de mensagens_whatsapp_sul.txt",
-        height=200,
-        key="texto_sul_org",
-        placeholder="Cole aqui o conteúdo do arquivo SUL..."
-    )
-
-    texto_norte_org = st.text_area(
-        "Conteúdo de mensagens_whatsapp_norte.txt",
-        height=200,
-        key="texto_norte_org",
-        placeholder="Cole aqui o conteúdo do arquivo NORTE..."
-    )
-
-    st.divider()
-
-    if st.button("Gerar mensagem de organizadores", key="btn_gerar_msg_org"):
-        erros_org = []
-        if not link_sul_org.strip():
-            erros_org.append("Informe o link da agenda Sul.")
-        if not link_norte_org.strip():
-            erros_org.append("Informe o link da agenda Norte.")
-        if not texto_sul_org.strip():
-            erros_org.append("Cole o conteúdo do arquivo SUL.")
-        if not texto_norte_org.strip():
-            erros_org.append("Cole o conteúdo do arquivo NORTE.")
-
-        if erros_org:
-            st.error("Preencha todos os campos:")
-            for e in erros_org:
-                st.write(f"- {e}")
-        else:
-            with st.spinner("Gerando mensagem com Claude..."):
-                mensagem_org = gerar_mensagem_organizadores_claude(
-                    texto_sul=texto_sul_org,
-                    texto_norte=texto_norte_org,
-                    link_sul=link_sul_org.strip(),
-                    link_norte=link_norte_org.strip(),
-                    total_mes1=str(int(total_mes1_org)),
-                    total_mes2=str(int(total_mes2_org)),
-                    nome_mes1=nome_mes1_org,
-                    nome_mes2=nome_mes2_org,
-                )
-
-            st.divider()
-            st.subheader("Mensagem pronta para organizadores")
-            st.text_area(
-                "Copie e envie para a lista de transmissão de organizadores",
-                value=mensagem_org,
-                height=500,
-                key="msg_org_pronta"
-            )
 
 # =========================================
 # TELA 5 — LIMPEZA PÓS-ATUALIZAÇÃO
