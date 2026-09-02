@@ -22,7 +22,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-st.set_page_config(page_title="APP ANT v2", page_icon="🏆", layout="centered")
+st.set_page_config(page_title="APP ANT v3", page_icon="🏆", layout="centered")
 
 
 def botao_copiar_seguro(texto: str, key: str = "copiar"):
@@ -1843,7 +1843,7 @@ Instruções:
 # =========================================
 # UI
 # =========================================
-st.title("🏆 APP ANT v2")
+st.title("🏆 APP ANT v3")
 st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para configurar")
 
 # Processa callback OAuth e carrega token — dentro da UI para evitar
