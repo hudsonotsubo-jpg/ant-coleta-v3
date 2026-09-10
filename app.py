@@ -1287,9 +1287,7 @@ def extrair_dias_para_nome(data_texto):
     if not datas:
         return ""
     dias = [d.split("/")[0] for d in datas]
-    if len(dias) == 1:
-        return dias[0]
-    return " ".join(dias[:2])
+    return " ".join(dias)
 
 
 # =========================================
