@@ -1095,6 +1095,52 @@ def uf_para_estado(uf):
     return mapa.get(uf.strip().upper(), "")
 
 
+# UFs da agenda SUL (Sul + Sudeste). Todas as demais UFs válidas pertencem à
+# agenda NORTE (Norte + Nordeste + Centro-Oeste).
+UFS_SUL = {"SP", "RJ", "MG", "ES", "PR", "SC", "RS"}
+
+
+def regiao_por_uf(uf):
+    """Detecta automaticamente a agenda (SUL ou NORTE) a partir da UF."""
+    uf = (uf or "").strip().upper()
+    if not uf:
+        return ""
+    return "SUL" if uf in UFS_SUL else "NORTE"
+
+
+def mes_label_por_numero(numero_str):
+    """Converte um número de mês ('10') no rótulo usado pelos seletores
+    da ANT ('10. Outubro'). Reaproveita a lista global _meses_global."""
+    try:
+        n = int(numero_str)
+    except (TypeError, ValueError):
+        return ""
+    if 1 <= n <= 12:
+        return _meses_global[n]
+    return ""
+
+
+def detectar_meses_por_datas(data_inicial_completa, data_final_completa):
+    """A partir de duas datas completas 'dd/mm/aaaa', detecta o(s) mês(es)
+    do torneio no formato usado pelos seletores da ANT.
+    Retorna (mes_1_label, mes_2_label, virada_de_mes)."""
+    if not data_inicial_completa or "/" not in data_inicial_completa:
+        return "", "", False
+
+    mes_ini = data_inicial_completa.split("/")[1]
+    mes_fim = mes_ini
+    if data_final_completa and "/" in data_final_completa:
+        mes_fim = data_final_completa.split("/")[1]
+
+    mes_1_label = mes_label_por_numero(mes_ini)
+
+    if mes_fim != mes_ini:
+        mes_2_label = mes_label_por_numero(mes_fim)
+        return mes_1_label, mes_2_label, True
+
+    return mes_1_label, "", False
+
+
 def normalizar_cidade_uf(cidade_uf):
     s = limpar_espacos(cidade_uf)
     if not s:
@@ -2310,6 +2356,38 @@ if _aba_ativa == aba3.nome:
     )
     texto_confirmado = st.session_state.get("texto_confirmado", "")
 
+    # Reprocessa os campos extraídos aqui (antes da seção de agenda) para
+    # que a detecção automática de região e mês já tenha os dados prontos.
+    campos = extrair_campos_confirmados(texto_confirmado)
+
+    data_evento_visual = normalizar_data_visual_ant(campos["data"])
+    torneio = campos["torneio"]
+    cidade_uf = normalizar_cidade_uf_tela2(campos["cidade_uf"])
+    local_evento = campos["local"]
+    categorias = campos["categorias"]
+    contato = normalizar_contato(campos["contato"])
+
+    cidade, uf, estado_extenso = separar_cidade_uf(cidade_uf)
+    data_inicial_completa, data_final_completa = extrair_data_inicial_final(campos["data"])
+    data_inicial = formatar_data_curta(data_inicial_completa)
+    data_final = formatar_data_curta(data_final_completa)
+
+    nome_arquivo = gerar_nome_arquivo(uf, campos["data"], cidade)
+
+    agenda_detectada = regiao_por_uf(uf)
+    mes_1_detectado, mes_2_detectado, virada_detectada = detectar_meses_por_datas(
+        data_inicial_completa, data_final_completa
+    )
+
+    # Quando um novo texto é colado, limpa as seleções anteriores de
+    # agenda/mês para permitir uma nova detecção automática.
+    if st.session_state.get("_texto_ref_deteccao") != texto_confirmado:
+        st.session_state["_texto_ref_deteccao"] = texto_confirmado
+        st.session_state["agenda_final"] = ""
+        st.session_state["mes_1"] = ""
+        st.session_state["mes_2"] = ""
+        st.session_state["virada_mes"] = False
+
     st.divider()
 
     st.markdown("### 2. Flyer final")
@@ -2332,28 +2410,37 @@ if _aba_ativa == aba3.nome:
 
     st.markdown("### 3. Organização da agenda")
 
+    if not st.session_state.get("agenda_final") and agenda_detectada:
+        st.session_state["agenda_final"] = agenda_detectada
+
     agenda = st.selectbox(
         "Agenda",
         ["", "SUL", "NORTE"],
         key="agenda_final"
     )
+    if agenda_detectada:
+        st.caption(f"🔎 Detectado automaticamente pela UF: {agenda_detectada}")
 
-    meses = [
-        "",
-        "1. Janeiro", "2. Fevereiro", "3. Março", "4. Abril",
-        "5. Maio", "6. Junho", "7. Julho", "8. Agosto",
-        "9. Setembro", "10. Outubro", "11. Novembro", "12. Dezembro"
-    ]
+    meses = _meses_global
 
-    meses_validos = meses[1:]
+    if not st.session_state.get("mes_1") and mes_1_detectado:
+        st.session_state["mes_1"] = mes_1_detectado
+    if virada_detectada and not st.session_state.get("virada_mes"):
+        st.session_state["virada_mes"] = True
 
     mes_1 = st.selectbox("Mês principal", meses, key="mes_1")
+    if mes_1_detectado:
+        st.caption(f"🔎 Detectado automaticamente pela data: {mes_1_detectado}")
 
     virada_mes = st.checkbox("Torneio em virada de mês?", key="virada_mes")
 
     mes_2 = ""
     if virada_mes:
+        if not st.session_state.get("mes_2") and mes_2_detectado:
+            st.session_state["mes_2"] = mes_2_detectado
         mes_2 = st.selectbox("Segundo mês", meses, key="mes_2")
+        if mes_2_detectado:
+            st.caption(f"🔎 Detectado automaticamente pela data: {mes_2_detectado}")
 
     st.divider()
 
@@ -2420,22 +2507,6 @@ if _aba_ativa == aba3.nome:
     st.divider()
 
     st.markdown("### 4. Pré-visualização da linha da macro")
-
-    campos = extrair_campos_confirmados(texto_confirmado)
-
-    data_evento_visual = normalizar_data_visual_ant(campos["data"])
-    torneio = campos["torneio"]
-    cidade_uf = normalizar_cidade_uf_tela2(campos["cidade_uf"])
-    local_evento = campos["local"]
-    categorias = campos["categorias"]
-    contato = normalizar_contato(campos["contato"])
-
-    cidade, uf, estado_extenso = separar_cidade_uf(cidade_uf)
-    data_inicial_completa, data_final_completa = extrair_data_inicial_final(campos["data"])
-    data_inicial = formatar_data_curta(data_inicial_completa)
-    data_final = formatar_data_curta(data_final_completa)
-
-    nome_arquivo = gerar_nome_arquivo(uf, campos["data"], cidade)
 
     linha_macro = [
         "",
