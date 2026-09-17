@@ -15,6 +15,7 @@ import gspread
 
 from PIL import Image
 from urllib.parse import urlencode
+from bs4 import BeautifulSoup
 
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.oauth2.credentials import Credentials as UserCredentials
@@ -309,6 +310,15 @@ if "drive_oauth_state" not in st.session_state:
 if "drive_token_carregado_persistencia" not in st.session_state:
     st.session_state["drive_token_carregado_persistencia"] = False
 
+if "gmail_token_info" not in st.session_state:
+    st.session_state["gmail_token_info"] = None
+
+if "gmail_oauth_state" not in st.session_state:
+    st.session_state["gmail_oauth_state"] = None
+
+if "gmail_token_carregado_persistencia" not in st.session_state:
+    st.session_state["gmail_token_carregado_persistencia"] = False
+
 
 # =========================================
 # CONFIG GOOGLE
@@ -324,12 +334,31 @@ SCOPES_DRIVE_OAUTH = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+SCOPES_GMAIL = [
+    "https://www.googleapis.com/auth/gmail.modify",
+]
+
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 
 NOME_ABA_CONFIG = "CONFIG_APP"
 CHAVE_TOKEN_DRIVE = "DRIVE_TOKEN_INFO"
+CHAVE_TOKEN_GMAIL = "GMAIL_TOKEN_INFO"
+
+# Conta dedicada que recebe os e-mails de formulário já conferidos pelo
+# usuário, com o print da postagem anexado, para registro automático.
+GMAIL_CONTA_FORMULARIOS = "registroforms.ant@gmail.com"
+GMAIL_LABEL_ARQUIVADOS = "Torneios Incluídos"
+
+# Nome de anexo gerado automaticamente pelo Google Forms/Drive para o
+# upload do flyer no formulário (padrão UUID). Usado para diferenciar o
+# flyer do organizador do print da postagem que o usuário anexa manualmente
+# ao encaminhar o e-mail.
+REGEX_ANEXO_FORMULARIO = re.compile(
+    r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\.(png|jpe?g|webp)$",
+    re.IGNORECASE
+)
 
 
 # =========================================
@@ -425,14 +454,15 @@ def buscar_linha_por_chave(aba, chave):
     return None
 
 
-def carregar_token_drive_persistido():
+def carregar_token_persistido(chave):
+    """Versão genérica: lê o token salvo na aba CONFIG_APP pela chave informada."""
     try:
         client_gs = conectar_gsheet()
         aba = obter_aba_config(client_gs)
         registros = aba.get_all_values()
 
         for linha in registros[1:]:
-            if len(linha) >= 2 and linha[0] == CHAVE_TOKEN_DRIVE and linha[1].strip():
+            if len(linha) >= 2 and linha[0] == chave and linha[1].strip():
                 return json.loads(linha[1])
 
     except Exception:
@@ -441,29 +471,45 @@ def carregar_token_drive_persistido():
     return None
 
 
-def salvar_token_drive_persistido(token_info):
+def salvar_token_persistido(chave, token_info):
+    """Versão genérica: salva o token na aba CONFIG_APP sob a chave informada."""
     client_gs = conectar_gsheet()
     aba = obter_aba_config(client_gs)
 
     valor_json = json.dumps(token_info, ensure_ascii=False)
-    linha_existente = buscar_linha_por_chave(aba, CHAVE_TOKEN_DRIVE)
+    linha_existente = buscar_linha_por_chave(aba, chave)
 
     if linha_existente:
-        aba.update(f"A{linha_existente}:B{linha_existente}", [[CHAVE_TOKEN_DRIVE, valor_json]])
+        aba.update(f"A{linha_existente}:B{linha_existente}", [[chave, valor_json]])
     else:
-        aba.append_row([CHAVE_TOKEN_DRIVE, valor_json], value_input_option="RAW")
+        aba.append_row([chave, valor_json], value_input_option="RAW")
 
 
-def limpar_token_drive_persistido():
+def limpar_token_persistido(chave):
+    """Versão genérica: limpa o token salvo na aba CONFIG_APP sob a chave informada."""
     try:
         client_gs = conectar_gsheet()
         aba = obter_aba_config(client_gs)
-        linha_existente = buscar_linha_por_chave(aba, CHAVE_TOKEN_DRIVE)
+        linha_existente = buscar_linha_por_chave(aba, chave)
 
         if linha_existente:
-            aba.update(f"A{linha_existente}:B{linha_existente}", [[CHAVE_TOKEN_DRIVE, ""]])
+            aba.update(f"A{linha_existente}:B{linha_existente}", [[chave, ""]])
     except Exception:
         pass
+
+
+# Wrappers mantidos para não alterar nenhum ponto de chamada já existente
+# do fluxo do Google Drive (comportamento idêntico ao de antes).
+def carregar_token_drive_persistido():
+    return carregar_token_persistido(CHAVE_TOKEN_DRIVE)
+
+
+def salvar_token_drive_persistido(token_info):
+    salvar_token_persistido(CHAVE_TOKEN_DRIVE, token_info)
+
+
+def limpar_token_drive_persistido():
+    limpar_token_persistido(CHAVE_TOKEN_DRIVE)
 
 
 def salvar_linha_na_aba(planilha, nome_aba, linha):
@@ -507,13 +553,16 @@ def registrar_log(
 # =========================================
 # GOOGLE DRIVE (OAuth WEB MANUAL)
 # =========================================
-def gerar_state_seguro():
-    base = f"{APP_SECRET_KEY}-{datetime.now().timestamp()}"
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+def gerar_state_seguro(prefixo="drive"):
+    """O prefixo (ex.: 'drive' ou 'gmail') vai embutido no state para que o
+    callback único de retorno do OAuth saiba a qual fluxo aquele retorno
+    pertence, já que os dois fluxos compartilham o mesmo redirect_uri."""
+    base = f"{APP_SECRET_KEY}-{prefixo}-{datetime.now().timestamp()}"
+    return f"{prefixo}:{hashlib.sha256(base.encode('utf-8')).hexdigest()}"
 
 
 def gerar_url_autorizacao_drive():
-    state = gerar_state_seguro()
+    state = gerar_state_seguro("drive")
     st.session_state["drive_oauth_state"] = state
 
     params = {
@@ -521,6 +570,26 @@ def gerar_url_autorizacao_drive():
         "redirect_uri": GOOGLE_REDIRECT_URI,
         "response_type": "code",
         "scope": " ".join(SCOPES_DRIVE_OAUTH),
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+        "state": state,
+    }
+
+    return f"{GOOGLE_AUTH_URI}?{urlencode(params)}"
+
+
+def gerar_url_autorizacao_gmail():
+    """Fluxo OAuth independente do Drive — autentica a conta dedicada
+    registroforms.ant@gmail.com, não a conta pessoal usada no Drive."""
+    state = gerar_state_seguro("gmail")
+    st.session_state["gmail_oauth_state"] = state
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(SCOPES_GMAIL),
         "access_type": "offline",
         "include_granted_scopes": "true",
         "prompt": "consent",
@@ -571,7 +640,11 @@ def renovar_token_google(refresh_token):
     return data
 
 
-def processar_callback_oauth_drive():
+def processar_callback_oauth_google():
+    """Callback único de retorno do OAuth do Google. Como os dois fluxos
+    (Drive da conta pessoal e Gmail da conta dedicada de formulários)
+    compartilham o mesmo redirect_uri, o prefixo embutido no state (ver
+    gerar_state_seguro) diz a qual fluxo esse retorno pertence."""
     code = obter_query_param("code")
     state = obter_query_param("state")
     error = obter_query_param("error")
@@ -584,7 +657,23 @@ def processar_callback_oauth_drive():
     if not code:
         return
 
-    state_esperado = st.session_state.get("drive_oauth_state")
+    prefixo = state.split(":", 1)[0] if state and ":" in state else "drive"
+
+    if prefixo == "gmail":
+        state_esperado = st.session_state.get("gmail_oauth_state")
+        scopes = SCOPES_GMAIL
+        chave_sessao = "gmail_token_info"
+        chave_persistida = CHAVE_TOKEN_GMAIL
+        chave_state_sessao = "gmail_oauth_state"
+        mensagem_sucesso = f"Gmail ({GMAIL_CONTA_FORMULARIOS}) conectado com sucesso."
+    else:
+        state_esperado = st.session_state.get("drive_oauth_state")
+        scopes = SCOPES_DRIVE_OAUTH
+        chave_sessao = "drive_token_info"
+        chave_persistida = CHAVE_TOKEN_DRIVE
+        chave_state_sessao = "drive_oauth_state"
+        mensagem_sucesso = "Google Drive conectado com sucesso."
+
     if state_esperado and state != state_esperado:
         st.error("Falha de segurança no retorno do Google (state inválido).")
         limpar_query_params()
@@ -604,23 +693,23 @@ def processar_callback_oauth_drive():
         "token_uri": GOOGLE_TOKEN_URI,
         "client_id": GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "scopes": SCOPES_DRIVE_OAUTH,
+        "scopes": scopes,
     }
 
-    st.session_state["drive_token_info"] = token_info
-    st.session_state["drive_oauth_state"] = None
+    st.session_state[chave_sessao] = token_info
+    st.session_state[chave_state_sessao] = None
     limpar_query_params()
 
     try:
-        salvar_token_drive_persistido(token_info)
+        salvar_token_persistido(chave_persistida, token_info)
     except Exception as e:
         st.warning(
-            "Google Drive conectado, mas não foi possível persistir o token na planilha LOG. "
-            "Você precisará reconectar o Drive se recarregar a página."
+            "Conectado, mas não foi possível persistir o token na planilha LOG. "
+            "Será necessário reconectar se a página recarregar."
         )
         st.code(f"Erro ao salvar token: {repr(e)}")
 
-    st.success("Google Drive conectado com sucesso.")
+    st.success(mensagem_sucesso)
     st.rerun()
 
 
@@ -725,6 +814,114 @@ def desconectar_drive_usuario():
     st.session_state["drive_token_info"] = None
     st.session_state["drive_oauth_state"] = None
     limpar_token_drive_persistido()
+    limpar_query_params()
+
+
+# =========================================
+# GOOGLE GMAIL (OAuth WEB MANUAL — conta dedicada de formulários)
+# =========================================
+def obter_credenciais_gmail_usuario():
+    token_info = st.session_state.get("gmail_token_info")
+    if not token_info:
+        return None
+
+    if not token_info.get("token"):
+        return None
+
+    creds = UserCredentials(
+        token=token_info.get("token"),
+        refresh_token=token_info.get("refresh_token"),
+        token_uri=token_info.get("token_uri"),
+        client_id=token_info.get("client_id"),
+        client_secret=token_info.get("client_secret"),
+        scopes=token_info.get("scopes"),
+    )
+
+    if creds.expired and creds.refresh_token:
+        try:
+            novo_token = renovar_token_google(creds.refresh_token)
+
+            token_atualizado = {
+                "token": novo_token.get("access_token"),
+                "refresh_token": token_info.get("refresh_token"),
+                "token_uri": GOOGLE_TOKEN_URI,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "scopes": SCOPES_GMAIL,
+            }
+
+            st.session_state["gmail_token_info"] = token_atualizado
+            salvar_token_persistido(CHAVE_TOKEN_GMAIL, token_atualizado)
+
+            creds = UserCredentials(
+                token=novo_token.get("access_token"),
+                refresh_token=token_info.get("refresh_token"),
+                token_uri=GOOGLE_TOKEN_URI,
+                client_id=GOOGLE_CLIENT_ID,
+                client_secret=GOOGLE_CLIENT_SECRET,
+                scopes=SCOPES_GMAIL,
+            )
+        except Exception:
+            st.session_state["gmail_token_info"] = None
+            limpar_token_persistido(CHAVE_TOKEN_GMAIL)
+            return None
+
+    if not creds.valid:
+        return None
+
+    return creds
+
+
+def carregar_token_gmail_persistido_na_sessao():
+    if st.session_state.get("gmail_token_carregado_persistencia"):
+        return
+
+    st.session_state["gmail_token_carregado_persistencia"] = True
+
+    if st.session_state.get("gmail_token_info"):
+        return
+
+    token_info = carregar_token_persistido(CHAVE_TOKEN_GMAIL)
+    if token_info:
+        st.session_state["gmail_token_info"] = token_info
+
+
+def gmail_conectado():
+    carregar_token_gmail_persistido_na_sessao()
+    creds = obter_credenciais_gmail_usuario()
+    return creds is not None
+
+
+def conectar_gmail_usuario():
+    carregar_token_gmail_persistido_na_sessao()
+    creds = obter_credenciais_gmail_usuario()
+    if not creds:
+        raise RuntimeError(
+            f"Gmail ({GMAIL_CONTA_FORMULARIOS}) não conectado. "
+            "Clique em 'Conectar Gmail' antes de processar os formulários."
+        )
+
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def desconectar_gmail_usuario():
+    token_info = st.session_state.get("gmail_token_info")
+    access_token = token_info.get("token") if token_info else None
+
+    if access_token:
+        try:
+            requests.post(
+                GOOGLE_REVOKE_URI,
+                params={"token": access_token},
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                timeout=15
+            )
+        except Exception:
+            pass
+
+    st.session_state["gmail_token_info"] = None
+    st.session_state["gmail_oauth_state"] = None
+    limpar_token_persistido(CHAVE_TOKEN_GMAIL)
     limpar_query_params()
 
 
@@ -851,6 +1048,174 @@ def excluir_arquivos_pasta_drive(service, folder_id):
         quantidade += 1
 
     return quantidade
+
+
+# =========================================
+# GMAIL — LEITURA DE E-MAILS DE FORMULÁRIO
+# =========================================
+class _AnexoGmail:
+    """Recipiente simples para um anexo baixado do Gmail, compatível com a
+    mesma interface (.name, .type, .getvalue()) que o restante do app já
+    espera de um arquivo do st.file_uploader — permite reutilizar sem
+    alterações as funções normalizar_imagem_para_api, upload_arquivo_drive
+    e gerar_nome_flyer."""
+    def __init__(self, nome, mime_type, conteudo_bytes):
+        self.name = nome
+        self.type = mime_type
+        self._conteudo = conteudo_bytes
+
+    def getvalue(self):
+        return self._conteudo
+
+
+def listar_mensagens_caixa_entrada_gmail(service):
+    mensagens = []
+    page_token = None
+
+    while True:
+        resposta = service.users().messages().list(
+            userId="me",
+            labelIds=["INBOX"],
+            pageToken=page_token,
+        ).execute()
+
+        mensagens.extend(resposta.get("messages", []))
+        page_token = resposta.get("nextPageToken")
+
+        if not page_token:
+            break
+
+    return mensagens
+
+
+def _decodificar_base64url(dado):
+    return base64.urlsafe_b64decode(dado.encode("utf-8") + b"==")
+
+
+def obter_corpo_e_anexos_gmail(service, msg_id):
+    """Retorna (assunto, corpo_html, lista_anexos) de uma mensagem.
+    lista_anexos: [{"filename":..., "attachment_id":..., "mime_type":...}]
+    Não interpreta nada — apenas separa o texto e os anexos brutos."""
+    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+
+    assunto = ""
+    for header in msg.get("payload", {}).get("headers", []):
+        if header.get("name", "").lower() == "subject":
+            assunto = header.get("value", "")
+            break
+
+    partes_html = []
+    partes_texto = []
+    anexos = []
+
+    def _percorrer(parte):
+        mime_type = parte.get("mimeType", "")
+        body = parte.get("body", {})
+        filename = parte.get("filename", "")
+
+        if filename:
+            anexos.append({
+                "filename": filename,
+                "attachment_id": body.get("attachmentId"),
+                "mime_type": mime_type,
+            })
+        elif mime_type == "text/html" and body.get("data"):
+            partes_html.append(_decodificar_base64url(body["data"]).decode("utf-8", errors="ignore"))
+        elif mime_type == "text/plain" and body.get("data"):
+            partes_texto.append(_decodificar_base64url(body["data"]).decode("utf-8", errors="ignore"))
+
+        for sub in parte.get("parts", []) or []:
+            _percorrer(sub)
+
+    _percorrer(msg.get("payload", {}))
+
+    corpo_html = "\n".join(partes_html)
+    corpo_texto = "\n".join(partes_texto)
+
+    return assunto, (corpo_html or corpo_texto), anexos
+
+
+def baixar_anexo_gmail(service, msg_id, attachment_id):
+    anexo = service.users().messages().attachments().get(
+        userId="me", messageId=msg_id, id=attachment_id
+    ).execute()
+    return _decodificar_base64url(anexo["data"])
+
+
+def identificar_flyer_e_print(service, msg_id, anexos):
+    """Classifica os anexos de imagem da mensagem entre 'flyer' (arquivo
+    gerado pelo Google Forms, nome em formato UUID) e 'print' (anexado
+    manualmente pelo usuário ao encaminhar o e-mail). Nunca adivinha:
+    qualquer ambiguidade (nenhum flyer, mais de um flyer, ou nenhum print
+    identificável) é reportada como erro, sem registrar o torneio."""
+    candidatos_flyer = []
+    candidatos_print = []
+
+    for anexo in anexos:
+        mime_type = (anexo.get("mime_type") or "").lower()
+        if not mime_type.startswith("image/"):
+            continue
+
+        if REGEX_ANEXO_FORMULARIO.match(anexo["filename"] or ""):
+            candidatos_flyer.append(anexo)
+        else:
+            candidatos_print.append(anexo)
+
+    erros = []
+    if len(candidatos_flyer) == 0:
+        erros.append("Nenhum anexo de flyer (nome em formato do Google Forms) foi identificado.")
+    elif len(candidatos_flyer) > 1:
+        erros.append(
+            f"Mais de um anexo parece ser o flyer do formulário ({len(candidatos_flyer)} encontrados) — ambíguo."
+        )
+
+    if len(candidatos_print) == 0:
+        erros.append("Nenhum anexo de print da postagem foi identificado.")
+    elif len(candidatos_print) > 1:
+        erros.append(
+            f"Mais de um anexo parece ser o print da postagem ({len(candidatos_print)} encontrados) — ambíguo."
+        )
+
+    if erros:
+        return None, None, erros
+
+    anexo_flyer = candidatos_flyer[0]
+    anexo_print = candidatos_print[0]
+
+    flyer_bytes = baixar_anexo_gmail(service, msg_id, anexo_flyer["attachment_id"])
+    print_bytes = baixar_anexo_gmail(service, msg_id, anexo_print["attachment_id"])
+
+    arquivo_flyer = _AnexoGmail(anexo_flyer["filename"], anexo_flyer["mime_type"], flyer_bytes)
+    arquivo_print = _AnexoGmail(anexo_print["filename"], anexo_print["mime_type"], print_bytes)
+
+    return arquivo_flyer, arquivo_print, []
+
+
+def obter_ou_criar_label_gmail(service, nome_label):
+    resposta = service.users().labels().list(userId="me").execute()
+    for label in resposta.get("labels", []):
+        if label.get("name") == nome_label:
+            return label["id"]
+
+    novo_label = service.users().labels().create(
+        userId="me",
+        body={
+            "name": nome_label,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        },
+    ).execute()
+    return novo_label["id"]
+
+
+def arquivar_email_gmail(service, msg_id, label_id):
+    """Remove o e-mail da caixa de entrada e move para a label de
+    arquivados — nunca exclui a mensagem."""
+    service.users().messages().modify(
+        userId="me",
+        id=msg_id,
+        body={"removeLabelIds": ["INBOX"], "addLabelIds": [label_id]},
+    ).execute()
 
 
 # =========================================
@@ -1495,6 +1860,310 @@ def extrair_campos_lote(texto):
     }
 
 
+# =========================================
+# EXTRAÇÃO LITERAL DE CAMPOS — FORMULÁRIO (SEM IA)
+# =========================================
+# Mapeia o rótulo exato (normalizado) que aparece no e-mail de notificação
+# do formulário para a chave interna correspondente. A extração é sempre
+# literal: lê o texto da célula ao lado do rótulo, sem interpretar,
+# resumir ou compor a partir de outros campos.
+CAMPOS_FORMULARIO_ANT = {
+    "nome do evento": "torneio",
+    "data do evento": "data",
+    "cidade e estado": "cidade_uf",
+    "nome do local do evento": "local",
+    "categorias": "categorias",
+    "contato para inscricoes": "contato",
+    "instagram do torneio ou arena": "instagram",
+}
+
+
+def _normalizar_rotulo_formulario(texto):
+    texto = remover_acentos(str(texto)).lower()
+    texto = texto.replace(":", "").strip()
+    texto = re.sub(r"\s+", " ", texto)
+    return texto
+
+
+def extrair_campos_formulario_html(corpo_html):
+    """Lê literalmente, célula a célula, o valor ao lado de cada rótulo
+    conhecido do e-mail de notificação do formulário (BitForm/WordPress).
+    Nunca infere, completa ou adivinha um campo ausente — um rótulo não
+    encontrado simplesmente resulta em string vazia."""
+    valores = {}
+
+    if corpo_html:
+        soup = BeautifulSoup(corpo_html, "html.parser")
+        for linha in soup.find_all("tr"):
+            celulas = linha.find_all(["td", "th"])
+            if len(celulas) < 2:
+                continue
+            rotulo = _normalizar_rotulo_formulario(celulas[0].get_text(" ", strip=True))
+            chave = CAMPOS_FORMULARIO_ANT.get(rotulo)
+            if chave and chave not in valores:
+                valores[chave] = limpar_espacos(celulas[1].get_text(" ", strip=True))
+
+    return {
+        "torneio": valores.get("torneio", ""),
+        "data": valores.get("data", ""),
+        "cidade_uf": valores.get("cidade_uf", ""),
+        "local": valores.get("local", ""),
+        "categorias": valores.get("categorias", ""),
+        "contato": valores.get("contato", ""),
+        "instagram": valores.get("instagram", ""),
+    }
+
+
+def validar_e_montar_torneio_formulario(campos_brutos):
+    """Valida os campos extraídos literalmente do e-mail de formulário e
+    monta os dados necessários para o registro — reaproveitando as mesmas
+    funções que a Tela 3 (Registro final do torneio) já usa hoje, para
+    garantir o mesmo comportamento de formatação e nomeação de arquivo.
+
+    Regra absoluta: nenhuma inconsistência é corrigida por suposição.
+    Qualquer campo ausente, ambíguo ou não reconhecido gera um erro e o
+    torneio NÃO é registrado — o e-mail correspondente permanece na caixa
+    de entrada para correção manual."""
+    erros = []
+
+    torneio = campos_brutos["torneio"]
+    if not torneio:
+        erros.append("Campo 'Nome do evento' ausente ou vazio.")
+
+    if not campos_brutos["data"]:
+        erros.append("Campo 'Data do evento' ausente ou vazio.")
+
+    cidade_uf = ""
+    cidade = ""
+    uf = ""
+    estado_extenso = ""
+    if not campos_brutos["cidade_uf"]:
+        erros.append("Campo 'Cidade e Estado' ausente ou vazio.")
+    else:
+        cidade_uf = normalizar_cidade_uf_tela2(campos_brutos["cidade_uf"])
+        if "/" not in cidade_uf:
+            erros.append(
+                f"Campo 'Cidade e Estado' veio sem a sigla do estado "
+                f"(\"{campos_brutos['cidade_uf']}\") — é necessário o formato 'Cidade/UF'. "
+                "Não será feita nenhuma suposição da UF a partir do nome da cidade."
+            )
+        else:
+            cidade, uf, estado_extenso = separar_cidade_uf(cidade_uf)
+            if not estado_extenso:
+                erros.append(f"UF \"{uf}\" não reconhecida no campo 'Cidade e Estado'.")
+
+    local_evento = campos_brutos["local"]
+    if not local_evento:
+        erros.append("Campo 'Nome do local do evento' ausente ou vazio.")
+
+    categorias = campos_brutos["categorias"]
+    if not categorias:
+        erros.append("Campo 'Categorias' ausente ou vazio.")
+
+    contato = normalizar_contato(campos_brutos["contato"])
+    if contato == "não encontrado":
+        if campos_brutos["instagram"]:
+            contato = campos_brutos["instagram"].strip()
+        else:
+            erros.append("Campo 'Contato para inscrições' ausente ou vazio.")
+
+    data_inicial_completa, data_final_completa = ("", "")
+    if campos_brutos["data"]:
+        data_inicial_completa, data_final_completa = extrair_data_inicial_final(campos_brutos["data"])
+        if not data_inicial_completa or not data_final_completa:
+            erros.append(f"Não foi possível interpretar a data \"{campos_brutos['data']}\" no formato esperado.")
+
+    data_evento_visual = normalizar_data_visual_ant(campos_brutos["data"]) if campos_brutos["data"] else ""
+    data_inicial = formatar_data_curta(data_inicial_completa) if data_inicial_completa else ""
+    data_final = formatar_data_curta(data_final_completa) if data_final_completa else ""
+
+    agenda = ""
+    mes_1, mes_2, virada_mes = "", "", False
+    if estado_extenso and uf:
+        agenda = regiao_por_uf(uf)
+        if not agenda:
+            erros.append(f"Não foi possível determinar a agenda (SUL/NORTE) a partir da UF \"{uf}\".")
+    if data_inicial_completa:
+        mes_1, mes_2, virada_mes = detectar_meses_por_datas(data_inicial_completa, data_final_completa)
+        if not mes_1:
+            erros.append(f"Não foi possível determinar o mês do torneio a partir da data \"{campos_brutos['data']}\".")
+
+    nome_arquivo = ""
+    if uf and campos_brutos["data"] and cidade:
+        nome_arquivo = gerar_nome_arquivo(uf, campos_brutos["data"], cidade)
+    if not erros and not nome_arquivo:
+        erros.append("Não foi possível gerar o nome automático do arquivo.")
+
+    dados = {
+        "torneio": torneio,
+        "cidade_uf": cidade_uf,
+        "estado_extenso": estado_extenso,
+        "local_evento": local_evento,
+        "categorias": categorias,
+        "contato": contato,
+        "data_evento_visual": data_evento_visual,
+        "data_inicial": data_inicial,
+        "data_final": data_final,
+        "agenda": agenda,
+        "mes_1": mes_1,
+        "mes_2": mes_2,
+        "virada_mes": virada_mes,
+        "nome_arquivo": nome_arquivo,
+    }
+
+    return dados, erros
+
+
+def processar_formularios_recebidos(gmail_service, drive_service, client_gs):
+    """Percorre todos os e-mails da caixa de entrada da conta dedicada de
+    formulários, valida e registra cada torneio (planilha + Drive, com a
+    mesma lógica de salvamento da Tela 3), e arquiva apenas os e-mails
+    processados com sucesso. E-mails com qualquer inconsistência ficam na
+    caixa de entrada para correção e nova tentativa.
+
+    Retorna uma lista de relatórios: {"assunto", "status", "torneio", "motivo"}.
+    """
+    relatorio = []
+
+    label_id = obter_ou_criar_label_gmail(gmail_service, GMAIL_LABEL_ARQUIVADOS)
+    mensagens = listar_mensagens_caixa_entrada_gmail(gmail_service)
+
+    for msg_ref in mensagens:
+        msg_id = msg_ref["id"]
+        assunto, corpo_html, anexos = obter_corpo_e_anexos_gmail(gmail_service, msg_id)
+
+        campos_brutos = extrair_campos_formulario_html(corpo_html)
+        dados, erros_campos = validar_e_montar_torneio_formulario(campos_brutos)
+
+        flyer_final, print_post, erros_anexos = identificar_flyer_e_print(gmail_service, msg_id, anexos)
+
+        erros = erros_campos + erros_anexos
+
+        if erros:
+            relatorio.append({
+                "assunto": assunto,
+                "status": "PENDENTE",
+                "torneio": dados.get("torneio") or "(não identificado)",
+                "motivo": " | ".join(erros),
+            })
+            continue
+
+        agenda = dados["agenda"]
+        mes_1 = dados["mes_1"]
+        mes_2 = dados["mes_2"]
+        virada_mes = dados["virada_mes"]
+        nome_arquivo = dados["nome_arquivo"]
+
+        linha_macro = [
+            "",
+            dados["data_evento_visual"],
+            dados["data_inicial"],
+            dados["data_final"],
+            dados["torneio"],
+            dados["cidade_uf"],
+            dados["estado_extenso"],
+            dados["local_evento"],
+            dados["categorias"],
+            dados["contato"],
+            "",
+        ]
+
+        status_print = "❌"
+        status_sheet = "❌"
+        status_flyer = "❌"
+        erro_print = ""
+        erro_sheet = ""
+        erro_flyer = ""
+        nome_flyer_final = ""
+
+        try:
+            nome_print_final = gerar_nome_flyer(print_post, f"{nome_arquivo} - PRINT")
+            pasta_torneios_mes_1 = obter_id_pasta_torneios(mes_1, agenda)
+            upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_1, nome_arquivo=nome_print_final)
+
+            if virada_mes and mes_2 and mes_2 != mes_1:
+                pasta_torneios_mes_2 = obter_id_pasta_torneios(mes_2, agenda)
+                upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_2, nome_arquivo=nome_print_final)
+
+            status_print = "✅"
+        except Exception as e:
+            erro_print = repr(e)
+
+        try:
+            planilha = obter_planilha_por_agenda(client_gs, agenda)
+            salvar_linha_na_aba(planilha, mes_1, linha_macro)
+
+            if virada_mes and mes_2 and mes_2 != mes_1:
+                salvar_linha_na_aba(planilha, mes_2, linha_macro)
+
+            status_sheet = "✅"
+        except Exception as e:
+            erro_sheet = repr(e)
+
+        try:
+            nome_flyer_final = gerar_nome_flyer(flyer_final, nome_arquivo)
+            pasta_flyers_mes_1 = obter_id_pasta_flyers(mes_1)
+            upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_1, nome_arquivo=nome_flyer_final)
+
+            if virada_mes and mes_2 and mes_2 != mes_1:
+                pasta_flyers_mes_2 = obter_id_pasta_flyers(mes_2)
+                upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_2, nome_arquivo=nome_flyer_final)
+
+            status_flyer = "✅"
+        except Exception as e:
+            erro_flyer = repr(e)
+
+        erros_consolidados = []
+        if erro_print:
+            erros_consolidados.append(f"PRINT: {erro_print}")
+        if erro_sheet:
+            erros_consolidados.append(f"GOOGLE_SHEET: {erro_sheet}")
+        if erro_flyer:
+            erros_consolidados.append(f"FLYER: {erro_flyer}")
+
+        status_final = "SUCESSO" if (
+            status_print == "✅" and status_sheet == "✅" and status_flyer == "✅"
+        ) else "ERRO"
+
+        try:
+            registrar_log(
+                client_gs=client_gs,
+                torneio=dados["torneio"],
+                cidade=dados["cidade_uf"],
+                data_evento=dados["data_evento_visual"],
+                agenda=agenda,
+                mes_1=mes_1,
+                mes_2=mes_2,
+                nome_flyer=nome_flyer_final if nome_flyer_final else nome_arquivo,
+                status=f"{status_final} (Formulário)",
+                erro=" | ".join(erros_consolidados),
+            )
+        except Exception:
+            pass
+
+        if status_final == "SUCESSO":
+            try:
+                arquivar_email_gmail(gmail_service, msg_id, label_id)
+            except Exception as e:
+                erros_consolidados.append(f"ARQUIVAMENTO_EMAIL: {repr(e)}")
+
+            relatorio.append({
+                "assunto": assunto,
+                "status": "REGISTRADO",
+                "torneio": dados["torneio"],
+                "motivo": "",
+            })
+        else:
+            relatorio.append({
+                "assunto": assunto,
+                "status": "PENDENTE",
+                "torneio": dados["torneio"],
+                "motivo": " | ".join(erros_consolidados),
+            })
+
+    return relatorio
+
+
 def montar_mensagem(texto):
     campos = extrair_campos_confirmados(texto)
 
@@ -1892,8 +2561,9 @@ st.caption("Powered by Claude (Anthropic) · Nova conta Google Drive pronta para
 
 # Processa callback OAuth e carrega token — dentro da UI para evitar
 # chamadas de rede durante o startup (causa segfault no Streamlit Cloud)
-processar_callback_oauth_drive()
+processar_callback_oauth_google()
 carregar_token_persistido_na_sessao()
+carregar_token_gmail_persistido_na_sessao()
 
 # Variáveis globais usadas em múltiplas telas
 _meses_global = [
@@ -1911,6 +2581,7 @@ _aba_ativa = st.radio(
         "Extração em lote",
         "Registro final do torneio",
         "Msg. Organizadores",
+        "Torneios recebidos (Formulário)",
         "Limpeza pós-atualização",
     ],
     horizontal=True,
@@ -1941,6 +2612,7 @@ aba1 = _make_aba("Extração individual")
 aba2 = _make_aba("Extração em lote")
 aba3 = _make_aba("Registro final do torneio")
 aba4 = _make_aba("Msg. Organizadores")
+aba6 = _make_aba("Torneios recebidos (Formulário)")
 aba5 = _make_aba("Limpeza pós-atualização")
 
 # =========================================
@@ -2990,4 +3662,86 @@ if _aba_ativa == aba5.nome:
                         pass
 
                 st.error("Erro geral ao executar a limpeza.")
+                st.code(repr(e))
+
+
+# =========================================
+# TELA 6 — TORNEIOS RECEBIDOS POR FORMULÁRIO
+# =========================================
+if _aba_ativa == aba6.nome:
+    st.subheader("Tela 6 — Torneios recebidos por formulário")
+    st.write(
+        f"Processa os torneios já conferidos pelo usuário e encaminhados (com o print da "
+        f"postagem anexado) para **{GMAIL_CONTA_FORMULARIOS}**. A extração dos dados é "
+        f"100% literal — sem IA — lida diretamente dos campos do formulário. Nenhuma "
+        f"informação ausente ou ambígua é registrada automaticamente."
+    )
+
+    st.divider()
+
+    st.markdown("### 1. Conexão com o Gmail")
+
+    if gmail_conectado():
+        st.success(f"Gmail conectado ({GMAIL_CONTA_FORMULARIOS}).")
+        if st.button("Desconectar Gmail", key="btn_desconectar_gmail"):
+            desconectar_gmail_usuario()
+            st.rerun()
+    else:
+        st.warning("Gmail não conectado.")
+        st.link_button("Conectar Gmail", gerar_url_autorizacao_gmail())
+
+    st.divider()
+
+    st.markdown("### 2. Processar caixa de entrada")
+    st.write(
+        "Verifica todos os e-mails na caixa de entrada, registra os torneios "
+        "sem pendências (planilha + Drive) e arquiva apenas esses. E-mails com "
+        "alguma inconsistência permanecem na caixa de entrada para correção."
+    )
+
+    if st.button("Verificar e registrar novos torneios", key="btn_processar_formularios"):
+        erros_pre = []
+        if not gmail_conectado():
+            erros_pre.append("Conecte o Gmail antes de processar.")
+        if not drive_conectado():
+            erros_pre.append("Conecte o Google Drive antes de processar.")
+
+        if erros_pre:
+            st.error("Não foi possível processar.")
+            for erro in erros_pre:
+                st.write(f"- {erro}")
+        else:
+            try:
+                gmail_service = conectar_gmail_usuario()
+                drive_service = conectar_drive_usuario()
+                client_gs = conectar_gsheet()
+
+                with st.spinner("Processando e-mails..."):
+                    relatorio = processar_formularios_recebidos(gmail_service, drive_service, client_gs)
+
+                st.divider()
+                st.markdown("### Resultado")
+
+                registrados = [r for r in relatorio if r["status"] == "REGISTRADO"]
+                pendentes = [r for r in relatorio if r["status"] == "PENDENTE"]
+
+                if not relatorio:
+                    st.info("Nenhum e-mail encontrado na caixa de entrada.")
+
+                if registrados:
+                    st.success(f"{len(registrados)} torneio(s) registrado(s) com sucesso e arquivado(s):")
+                    for r in registrados:
+                        st.write(f"✅ {r['torneio']} — {r['assunto']}")
+
+                if pendentes:
+                    st.warning(
+                        f"{len(pendentes)} e-mail(s) com pendência — permanecem na caixa de "
+                        "entrada para correção e nova tentativa:"
+                    )
+                    for r in pendentes:
+                        st.write(f"⚠️ {r['torneio']} — {r['assunto']}")
+                        st.caption(r["motivo"])
+
+            except Exception as e:
+                st.error("Erro geral ao processar os formulários.")
                 st.code(repr(e))
