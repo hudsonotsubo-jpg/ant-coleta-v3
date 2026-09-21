@@ -1859,7 +1859,9 @@ CAMPOS_FORMULARIO_ANT = {
 
 def _normalizar_rotulo_formulario(texto):
     texto = remover_acentos(str(texto)).lower()
-    texto = texto.replace(":", "").strip()
+    # Remove marcações de campo obrigatório (ex.: "Data do evento:*") e
+    # pontuação do rótulo, mantendo apenas o texto do nome do campo.
+    texto = texto.replace(":", "").replace("*", "").strip()
     texto = re.sub(r"\s+", " ", texto)
     return texto
 
