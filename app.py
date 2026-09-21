@@ -351,14 +351,6 @@ CHAVE_TOKEN_GMAIL = "GMAIL_TOKEN_INFO"
 GMAIL_CONTA_FORMULARIOS = "registroforms.ant@gmail.com"
 GMAIL_LABEL_ARQUIVADOS = "Torneios Incluídos"
 
-# Nome de anexo gerado automaticamente pelo Google Forms/Drive para o
-# upload do flyer no formulário (padrão UUID). Usado para diferenciar o
-# flyer do organizador do print da postagem que o usuário anexa manualmente
-# ao encaminhar o e-mail.
-REGEX_ANEXO_FORMULARIO = re.compile(
-    r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\.(png|jpe?g|webp)$",
-    re.IGNORECASE
-)
 
 
 # =========================================
@@ -1143,44 +1135,31 @@ def baixar_anexo_gmail(service, msg_id, attachment_id):
 
 
 def identificar_flyer_e_print(service, msg_id, anexos):
-    """Classifica os anexos de imagem da mensagem entre 'flyer' (arquivo
-    gerado pelo Google Forms, nome em formato UUID) e 'print' (anexado
-    manualmente pelo usuário ao encaminhar o e-mail). Nunca adivinha:
-    qualquer ambiguidade (nenhum flyer, mais de um flyer, ou nenhum print
-    identificável) é reportada como erro, sem registrar o torneio."""
-    candidatos_flyer = []
-    candidatos_print = []
+    """Classifica os dois anexos de imagem da mensagem pela ORDEM em que
+    aparecem no e-mail — não pelo nome do arquivo, que muda de forma
+    imprevisível conforme o cliente de e-mail (Outlook, Gmail etc.) usado
+    para encaminhar.
 
-    for anexo in anexos:
-        mime_type = (anexo.get("mime_type") or "").lower()
-        if not mime_type.startswith("image/"):
-            continue
+    Convenção adotada: o usuário sempre encaminha o e-mail do formulário e
+    SÓ DEPOIS anexa o print da postagem. Isso preserva o anexo original do
+    formulário na posição em que já estava e acrescenta o print no final.
+    Logo: primeira imagem anexada = flyer do organizador; última imagem
+    anexada = print da postagem.
 
-        if REGEX_ANEXO_FORMULARIO.match(anexo["filename"] or ""):
-            candidatos_flyer.append(anexo)
-        else:
-            candidatos_print.append(anexo)
+    Só é seguro aplicar essa regra quando a mensagem tem exatamente 2
+    anexos de imagem. Qualquer outra contagem (0, 1 ou 3+) é ambígua e
+    reportada como erro, sem registrar o torneio."""
+    imagens = [a for a in anexos if (a.get("mime_type") or "").lower().startswith("image/")]
 
-    erros = []
-    if len(candidatos_flyer) == 0:
-        erros.append("Nenhum anexo de flyer (nome em formato do Google Forms) foi identificado.")
-    elif len(candidatos_flyer) > 1:
-        erros.append(
-            f"Mais de um anexo parece ser o flyer do formulário ({len(candidatos_flyer)} encontrados) — ambíguo."
-        )
+    if len(imagens) != 2:
+        return None, None, [
+            f"Esperados exatamente 2 anexos de imagem (flyer + print), mas foram "
+            f"encontrados {len(imagens)}. Confira se o e-mail foi encaminhado com o "
+            f"flyer original do formulário e o print anexado por último."
+        ]
 
-    if len(candidatos_print) == 0:
-        erros.append("Nenhum anexo de print da postagem foi identificado.")
-    elif len(candidatos_print) > 1:
-        erros.append(
-            f"Mais de um anexo parece ser o print da postagem ({len(candidatos_print)} encontrados) — ambíguo."
-        )
-
-    if erros:
-        return None, None, erros
-
-    anexo_flyer = candidatos_flyer[0]
-    anexo_print = candidatos_print[0]
+    anexo_flyer = imagens[0]
+    anexo_print = imagens[-1]
 
     flyer_bytes = baixar_anexo_gmail(service, msg_id, anexo_flyer["attachment_id"])
     print_bytes = baixar_anexo_gmail(service, msg_id, anexo_print["attachment_id"])
