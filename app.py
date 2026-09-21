@@ -1995,14 +1995,101 @@ def validar_e_montar_torneio_formulario(campos_brutos):
     return dados, erros
 
 
+def _salvar_torneio_formulario(drive_service, client_gs, dados, flyer_final, print_post):
+    """Executa os 3 passos de salvamento (print → planilha → flyer),
+    idênticos aos usados na Tela 3. Retorna (status_final, erros_consolidados,
+    nome_flyer_final)."""
+    agenda = dados["agenda"]
+    mes_1 = dados["mes_1"]
+    mes_2 = dados["mes_2"]
+    virada_mes = dados["virada_mes"]
+    nome_arquivo = dados["nome_arquivo"]
+
+    linha_macro = [
+        "",
+        dados["data_evento_visual"],
+        dados["data_inicial"],
+        dados["data_final"],
+        dados["torneio"],
+        dados["cidade_uf"],
+        dados["estado_extenso"],
+        dados["local_evento"],
+        dados["categorias"],
+        dados["contato"],
+        "",
+    ]
+
+    status_print = "❌"
+    status_sheet = "❌"
+    status_flyer = "❌"
+    erro_print = ""
+    erro_sheet = ""
+    erro_flyer = ""
+    nome_flyer_final = ""
+
+    try:
+        nome_print_final = gerar_nome_flyer(print_post, f"{nome_arquivo} - PRINT")
+        pasta_torneios_mes_1 = obter_id_pasta_torneios(mes_1, agenda)
+        upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_1, nome_arquivo=nome_print_final)
+
+        if virada_mes and mes_2 and mes_2 != mes_1:
+            pasta_torneios_mes_2 = obter_id_pasta_torneios(mes_2, agenda)
+            upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_2, nome_arquivo=nome_print_final)
+
+        status_print = "✅"
+    except Exception as e:
+        erro_print = repr(e)
+
+    try:
+        planilha = obter_planilha_por_agenda(client_gs, agenda)
+        salvar_linha_na_aba(planilha, mes_1, linha_macro)
+
+        if virada_mes and mes_2 and mes_2 != mes_1:
+            salvar_linha_na_aba(planilha, mes_2, linha_macro)
+
+        status_sheet = "✅"
+    except Exception as e:
+        erro_sheet = repr(e)
+
+    try:
+        nome_flyer_final = gerar_nome_flyer(flyer_final, nome_arquivo)
+        pasta_flyers_mes_1 = obter_id_pasta_flyers(mes_1)
+        upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_1, nome_arquivo=nome_flyer_final)
+
+        if virada_mes and mes_2 and mes_2 != mes_1:
+            pasta_flyers_mes_2 = obter_id_pasta_flyers(mes_2)
+            upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_2, nome_arquivo=nome_flyer_final)
+
+        status_flyer = "✅"
+    except Exception as e:
+        erro_flyer = repr(e)
+
+    erros_consolidados = []
+    if erro_print:
+        erros_consolidados.append(f"PRINT: {erro_print}")
+    if erro_sheet:
+        erros_consolidados.append(f"GOOGLE_SHEET: {erro_sheet}")
+    if erro_flyer:
+        erros_consolidados.append(f"FLYER: {erro_flyer}")
+
+    status_final = "SUCESSO" if (
+        status_print == "✅" and status_sheet == "✅" and status_flyer == "✅"
+    ) else "ERRO"
+
+    return status_final, erros_consolidados, (nome_flyer_final if nome_flyer_final else nome_arquivo)
+
+
 def processar_formularios_recebidos(gmail_service, drive_service, client_gs):
     """Percorre todos os e-mails da caixa de entrada da conta dedicada de
     formulários, valida e registra cada torneio (planilha + Drive, com a
     mesma lógica de salvamento da Tela 3), e arquiva apenas os e-mails
     processados com sucesso. E-mails com qualquer inconsistência ficam na
-    caixa de entrada para correção e nova tentativa.
+    caixa de entrada para correção e nova tentativa — e cada item pendente
+    carrega os dados brutos e os anexos, para permitir correção manual
+    direto na tela, sem precisar reencaminhar o e-mail.
 
-    Retorna uma lista de relatórios: {"assunto", "status", "torneio", "motivo"}.
+    Retorna uma lista de relatórios: {"msg_id", "assunto", "status",
+    "torneio", "motivo", "campos_brutos", "anexos"}.
     """
     relatorio = []
 
@@ -2022,89 +2109,19 @@ def processar_formularios_recebidos(gmail_service, drive_service, client_gs):
 
         if erros:
             relatorio.append({
+                "msg_id": msg_id,
                 "assunto": assunto,
                 "status": "PENDENTE",
                 "torneio": dados.get("torneio") or "(não identificado)",
                 "motivo": " | ".join(erros),
+                "campos_brutos": campos_brutos,
+                "anexos": anexos,
             })
             continue
 
-        agenda = dados["agenda"]
-        mes_1 = dados["mes_1"]
-        mes_2 = dados["mes_2"]
-        virada_mes = dados["virada_mes"]
-        nome_arquivo = dados["nome_arquivo"]
-
-        linha_macro = [
-            "",
-            dados["data_evento_visual"],
-            dados["data_inicial"],
-            dados["data_final"],
-            dados["torneio"],
-            dados["cidade_uf"],
-            dados["estado_extenso"],
-            dados["local_evento"],
-            dados["categorias"],
-            dados["contato"],
-            "",
-        ]
-
-        status_print = "❌"
-        status_sheet = "❌"
-        status_flyer = "❌"
-        erro_print = ""
-        erro_sheet = ""
-        erro_flyer = ""
-        nome_flyer_final = ""
-
-        try:
-            nome_print_final = gerar_nome_flyer(print_post, f"{nome_arquivo} - PRINT")
-            pasta_torneios_mes_1 = obter_id_pasta_torneios(mes_1, agenda)
-            upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_1, nome_arquivo=nome_print_final)
-
-            if virada_mes and mes_2 and mes_2 != mes_1:
-                pasta_torneios_mes_2 = obter_id_pasta_torneios(mes_2, agenda)
-                upload_arquivo_drive(drive_service, print_post, pasta_torneios_mes_2, nome_arquivo=nome_print_final)
-
-            status_print = "✅"
-        except Exception as e:
-            erro_print = repr(e)
-
-        try:
-            planilha = obter_planilha_por_agenda(client_gs, agenda)
-            salvar_linha_na_aba(planilha, mes_1, linha_macro)
-
-            if virada_mes and mes_2 and mes_2 != mes_1:
-                salvar_linha_na_aba(planilha, mes_2, linha_macro)
-
-            status_sheet = "✅"
-        except Exception as e:
-            erro_sheet = repr(e)
-
-        try:
-            nome_flyer_final = gerar_nome_flyer(flyer_final, nome_arquivo)
-            pasta_flyers_mes_1 = obter_id_pasta_flyers(mes_1)
-            upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_1, nome_arquivo=nome_flyer_final)
-
-            if virada_mes and mes_2 and mes_2 != mes_1:
-                pasta_flyers_mes_2 = obter_id_pasta_flyers(mes_2)
-                upload_arquivo_drive(drive_service, flyer_final, pasta_flyers_mes_2, nome_arquivo=nome_flyer_final)
-
-            status_flyer = "✅"
-        except Exception as e:
-            erro_flyer = repr(e)
-
-        erros_consolidados = []
-        if erro_print:
-            erros_consolidados.append(f"PRINT: {erro_print}")
-        if erro_sheet:
-            erros_consolidados.append(f"GOOGLE_SHEET: {erro_sheet}")
-        if erro_flyer:
-            erros_consolidados.append(f"FLYER: {erro_flyer}")
-
-        status_final = "SUCESSO" if (
-            status_print == "✅" and status_sheet == "✅" and status_flyer == "✅"
-        ) else "ERRO"
+        status_final, erros_consolidados, nome_flyer_final = _salvar_torneio_formulario(
+            drive_service, client_gs, dados, flyer_final, print_post
+        )
 
         try:
             registrar_log(
@@ -2112,10 +2129,10 @@ def processar_formularios_recebidos(gmail_service, drive_service, client_gs):
                 torneio=dados["torneio"],
                 cidade=dados["cidade_uf"],
                 data_evento=dados["data_evento_visual"],
-                agenda=agenda,
-                mes_1=mes_1,
-                mes_2=mes_2,
-                nome_flyer=nome_flyer_final if nome_flyer_final else nome_arquivo,
+                agenda=dados["agenda"],
+                mes_1=dados["mes_1"],
+                mes_2=dados["mes_2"],
+                nome_flyer=nome_flyer_final,
                 status=f"{status_final} (Formulário)",
                 erro=" | ".join(erros_consolidados),
             )
@@ -2129,20 +2146,88 @@ def processar_formularios_recebidos(gmail_service, drive_service, client_gs):
                 erros_consolidados.append(f"ARQUIVAMENTO_EMAIL: {repr(e)}")
 
             relatorio.append({
+                "msg_id": msg_id,
                 "assunto": assunto,
                 "status": "REGISTRADO",
                 "torneio": dados["torneio"],
                 "motivo": "",
+                "campos_brutos": campos_brutos,
+                "anexos": anexos,
             })
         else:
             relatorio.append({
+                "msg_id": msg_id,
                 "assunto": assunto,
                 "status": "PENDENTE",
                 "torneio": dados["torneio"],
                 "motivo": " | ".join(erros_consolidados),
+                "campos_brutos": campos_brutos,
+                "anexos": anexos,
             })
 
     return relatorio
+
+
+def tentar_registrar_torneio_corrigido(
+    gmail_service, drive_service, client_gs, msg_id, campos_editados, anexos,
+    upload_flyer=None, upload_print=None
+):
+    """Reaplica a validação sobre os campos corrigidos manualmente na tela
+    e tenta registrar de novo. Se o usuário tiver feito upload manual de
+    flyer e/ou print, esses arquivos têm prioridade; caso contrário, tenta
+    reidentificar os anexos originais do e-mail (primeira imagem = flyer,
+    última = print). Nunca inventa nenhum dado — qualquer pendência
+    remanescente é retornada como erro, sem registrar."""
+    dados, erros = validar_e_montar_torneio_formulario(campos_editados)
+
+    flyer_final = upload_flyer
+    print_post = upload_print
+
+    if flyer_final is None or print_post is None:
+        flyer_email, print_email, erros_anexos = identificar_flyer_e_print(gmail_service, msg_id, anexos)
+        if flyer_final is None:
+            if flyer_email is not None:
+                flyer_final = flyer_email
+            else:
+                erros.append("Flyer não identificado no e-mail original — faça o upload manual do flyer.")
+        if print_post is None:
+            if print_email is not None:
+                print_post = print_email
+            else:
+                erros.append("Print não identificado no e-mail original — faça o upload manual do print.")
+
+    if erros:
+        return False, erros, dados
+
+    status_final, erros_consolidados, nome_flyer_final = _salvar_torneio_formulario(
+        drive_service, client_gs, dados, flyer_final, print_post
+    )
+
+    try:
+        registrar_log(
+            client_gs=client_gs,
+            torneio=dados["torneio"],
+            cidade=dados["cidade_uf"],
+            data_evento=dados["data_evento_visual"],
+            agenda=dados["agenda"],
+            mes_1=dados["mes_1"],
+            mes_2=dados["mes_2"],
+            nome_flyer=nome_flyer_final,
+            status=f"{status_final} (Formulário — corrigido manualmente)",
+            erro=" | ".join(erros_consolidados),
+        )
+    except Exception:
+        pass
+
+    if status_final == "SUCESSO":
+        try:
+            label_id = obter_ou_criar_label_gmail(gmail_service, GMAIL_LABEL_ARQUIVADOS)
+            arquivar_email_gmail(gmail_service, msg_id, label_id)
+        except Exception as e:
+            erros_consolidados.append(f"ARQUIVAMENTO_EMAIL: {repr(e)}")
+        return True, erros_consolidados, dados
+
+    return False, erros_consolidados, dados
 
 
 def montar_mensagem(texto):
@@ -3680,6 +3765,9 @@ if _aba_ativa == aba6.nome:
         "alguma inconsistência permanecem na caixa de entrada para correção."
     )
 
+    if "relatorio_formularios" not in st.session_state:
+        st.session_state["relatorio_formularios"] = []
+
     if st.button("Verificar e registrar novos torneios", key="btn_processar_formularios"):
         erros_pre = []
         if not gmail_conectado():
@@ -3700,29 +3788,134 @@ if _aba_ativa == aba6.nome:
                 with st.spinner("Processando e-mails..."):
                     relatorio = processar_formularios_recebidos(gmail_service, drive_service, client_gs)
 
-                st.divider()
-                st.markdown("### Resultado")
-
-                registrados = [r for r in relatorio if r["status"] == "REGISTRADO"]
-                pendentes = [r for r in relatorio if r["status"] == "PENDENTE"]
+                st.session_state["relatorio_formularios"] = relatorio
 
                 if not relatorio:
                     st.info("Nenhum e-mail encontrado na caixa de entrada.")
 
-                if registrados:
-                    st.success(f"{len(registrados)} torneio(s) registrado(s) com sucesso e arquivado(s):")
-                    for r in registrados:
-                        st.write(f"✅ {r['torneio']} — {r['assunto']}")
-
-                if pendentes:
-                    st.warning(
-                        f"{len(pendentes)} e-mail(s) com pendência — permanecem na caixa de "
-                        "entrada para correção e nova tentativa:"
-                    )
-                    for r in pendentes:
-                        st.write(f"⚠️ {r['torneio']} — {r['assunto']}")
-                        st.caption(r["motivo"])
-
             except Exception as e:
                 st.error("Erro geral ao processar os formulários.")
                 st.code(repr(e))
+
+    st.divider()
+    st.markdown("### Resultado")
+
+    relatorio_atual = st.session_state.get("relatorio_formularios", [])
+    registrados = [r for r in relatorio_atual if r["status"] == "REGISTRADO"]
+    pendentes = [r for r in relatorio_atual if r["status"] == "PENDENTE"]
+
+    if not relatorio_atual:
+        st.caption("Nenhum resultado ainda — clique em 'Verificar e registrar novos torneios' acima.")
+
+    if registrados:
+        st.success(f"{len(registrados)} torneio(s) registrado(s) com sucesso e arquivado(s):")
+        for r in registrados:
+            st.write(f"✅ {r['torneio']} — {r['assunto']}")
+
+    if pendentes:
+        st.warning(
+            f"{len(pendentes)} e-mail(s) com pendência — corrija diretamente abaixo, campo a "
+            "campo, e clique em 'Registrar'. O e-mail original permanece na caixa de entrada "
+            "até o registro ser concluído com sucesso."
+        )
+
+        for r in pendentes:
+            msg_id = r["msg_id"]
+            cb = r["campos_brutos"]
+
+            with st.expander(f"⚠️ {r['torneio'] or '(não identificado)'} — {r['assunto']}"):
+                st.caption(f"Pendência apontada: {r['motivo']}")
+
+                torneio_edit = st.text_input(
+                    "Nome do evento", value=cb.get("torneio", ""), key=f"corr_torneio_{msg_id}"
+                )
+                data_edit = st.text_input(
+                    "Data do evento", value=cb.get("data", ""), key=f"corr_data_{msg_id}"
+                )
+                cidade_edit = st.text_input(
+                    "Cidade e Estado (formato Cidade/UF)",
+                    value=cb.get("cidade_uf", ""), key=f"corr_cidade_{msg_id}"
+                )
+                local_edit = st.text_input(
+                    "Nome do local do evento", value=cb.get("local", ""), key=f"corr_local_{msg_id}"
+                )
+                categorias_edit = st.text_input(
+                    "Categorias", value=cb.get("categorias", ""), key=f"corr_categorias_{msg_id}"
+                )
+                contato_edit = st.text_input(
+                    "Contato para inscrições", value=cb.get("contato", ""), key=f"corr_contato_{msg_id}"
+                )
+                instagram_edit = st.text_input(
+                    "Instagram do torneio ou arena", value=cb.get("instagram", ""), key=f"corr_instagram_{msg_id}"
+                )
+
+                st.caption(
+                    "Envie os arquivos abaixo apenas se a pendência for sobre flyer e/ou print "
+                    "ausente ou não identificado. Se não enviar, a automação tenta reaproveitar "
+                    "os anexos originais do e-mail."
+                )
+                upload_flyer = st.file_uploader(
+                    "Flyer (opcional)", type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
+                    key=f"corr_flyer_{msg_id}"
+                )
+                upload_print = st.file_uploader(
+                    "Print da postagem (opcional)", type=["jpg", "jpeg", "png", "webp", "heic", "heif", "bmp"],
+                    key=f"corr_print_{msg_id}"
+                )
+
+                if st.button("Registrar", key=f"corr_btn_{msg_id}"):
+                    campos_editados = {
+                        "torneio": limpar_espacos(torneio_edit),
+                        "data": limpar_espacos(data_edit),
+                        "cidade_uf": limpar_espacos(cidade_edit),
+                        "local": limpar_espacos(local_edit),
+                        "categorias": limpar_espacos(categorias_edit),
+                        "contato": limpar_espacos(contato_edit),
+                        "instagram": limpar_espacos(instagram_edit),
+                    }
+
+                    erros_pre = []
+                    if not gmail_conectado():
+                        erros_pre.append("Conecte o Gmail antes de registrar.")
+                    if not drive_conectado():
+                        erros_pre.append("Conecte o Google Drive antes de registrar.")
+
+                    if erros_pre:
+                        for erro in erros_pre:
+                            st.error(erro)
+                    else:
+                        try:
+                            gmail_service = conectar_gmail_usuario()
+                            drive_service = conectar_drive_usuario()
+                            client_gs = conectar_gsheet()
+
+                            sucesso, erros_ou_avisos, dados = tentar_registrar_torneio_corrigido(
+                                gmail_service, drive_service, client_gs, msg_id,
+                                campos_editados, r["anexos"],
+                                upload_flyer=upload_flyer, upload_print=upload_print,
+                            )
+
+                            for item in st.session_state["relatorio_formularios"]:
+                                if item["msg_id"] != msg_id:
+                                    continue
+                                if sucesso:
+                                    item["status"] = "REGISTRADO"
+                                    item["torneio"] = dados["torneio"]
+                                    item["motivo"] = ""
+                                else:
+                                    item["campos_brutos"] = campos_editados
+                                    item["motivo"] = " | ".join(erros_ou_avisos)
+                                break
+
+                            if sucesso:
+                                st.success("Torneio registrado com sucesso.")
+                            else:
+                                st.error("Ainda há pendências:")
+                                for erro in erros_ou_avisos:
+                                    st.write(f"- {erro}")
+
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error("Erro geral ao tentar registrar.")
+                            st.code(repr(e))
